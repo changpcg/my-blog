@@ -18,13 +18,14 @@ import shutil
 import sqlite3
 import time
 import threading
+import urllib.error
 import urllib.request
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime
 from http import cookies
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import parse_qs, quote, urlparse
+from urllib.parse import parse_qs, quote, urlencode, urlparse
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 STATIC_DIR = os.path.join(BASE_DIR, "static")
@@ -211,6 +212,11 @@ def init_db():
         for col, default in (("room_bg", "room"), ("room_char", "bear")):
             if col not in ucols:
                 conn.execute(f"ALTER TABLE users ADD COLUMN {col} TEXT NOT NULL DEFAULT '{default}'")
+        # 002: 회원 서버 가입 시각(번호 재사용 구분)·회원 페이지에서 닉네임 바꾼 시각
+        if "auth_joined" not in ucols:
+            conn.execute("ALTER TABLE users ADD COLUMN auth_joined TEXT")
+        if "auth_nick_at" not in ucols:
+            conn.execute("ALTER TABLE users ADD COLUMN auth_nick_at INTEGER NOT NULL DEFAULT 0")
         for col in ("blog_title", "blog_desc", "avatar", "categories"):
             if col not in ucols:
                 conn.execute(f"ALTER TABLE users ADD COLUMN {col} TEXT")
@@ -601,6 +607,93 @@ def read_ticket(ticket):
     return data
 
 
+def sign_bridge(data):
+    """회원 서버와 주고받는 서명 값 (act로 용도 구분, 1분 만료)."""
+    data = {**data, "exp": int(time.time()) + 60}
+    payload = base64.urlsafe_b64encode(json.dumps(data, ensure_ascii=False).encode()).decode().rstrip("=")
+    return payload + "." + hmac.new(sso_key(), payload.encode(), hashlib.sha256).hexdigest()
+
+
+def read_bridge(token, act):
+    """서명·act·만료가 맞으면 내용(dict), 아니면 None."""
+    try:
+        payload, sig = str(token).split(".", 1)
+        if not hmac.compare_digest(hmac.new(sso_key(), payload.encode(), hashlib.sha256).hexdigest(), sig):
+            return None
+        data = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(data, dict) or data.get("act") != act or int(data.get("exp", 0)) < time.time():
+        return None
+    return data
+
+
+def auth_post(path, form):
+    """회원 서버(PHP) 호출 (3초). (상태코드, JSON) 또는 연결 실패면 None. 프록시는 쓰지 않음."""
+    req = urllib.request.Request(
+        AUTH_URL + path, data=urlencode(form).encode(), headers={"Accept": "application/json"}, method="POST"
+    )
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    try:
+        with opener.open(req, timeout=3) as r:
+            return r.status, json.loads(r.read().decode("utf-8") or "{}")
+    except urllib.error.HTTPError as e:
+        try:
+            return e.code, json.loads(e.read().decode("utf-8") or "{}")
+        except ValueError:
+            return e.code, {}
+    except (urllib.error.URLError, OSError, ValueError):
+        return None
+
+
+def delete_blog_account(uid):
+    """블로그 계정 하나와 그 글·댓글·공감·이웃·세션·파일 정리 (관리자 탈퇴·회원 스스로 탈퇴 공통)."""
+    with db() as conn:
+        # (foreign_keys가 꺼져 있어 ON DELETE CASCADE가 안 돌아감. 글을 지우기 전에 그 글에 달린 댓글·공감부터)
+        conn.execute("DELETE FROM comments WHERE post_id IN (SELECT id FROM posts WHERE author_id = ?)", (uid,))
+        conn.execute("DELETE FROM likes WHERE user_id = ? OR post_id IN (SELECT id FROM posts WHERE author_id = ?)", (uid, uid))
+        conn.execute("DELETE FROM posts WHERE author_id = ?", (uid,))
+        # 이 회원의 답글은 지우고, 남의 답글이 달린 이 회원의 댓글은 '삭제된 댓글입니다' 자리로 남김
+        parents = [r[0] for r in conn.execute(
+            "SELECT DISTINCT parent_id FROM comments WHERE user_id = ? AND parent_id IS NOT NULL", (uid,)
+        ).fetchall()]
+        conn.execute("DELETE FROM comments WHERE user_id = ? AND parent_id IS NOT NULL", (uid,))
+        conn.execute(
+            "UPDATE comments SET deleted = 1, name = '', content = '', password_hash = '', user_id = NULL "
+            "WHERE user_id = ? AND id IN (SELECT parent_id FROM comments WHERE parent_id IS NOT NULL AND deleted = 0)",
+            (uid,),
+        )
+        conn.execute("DELETE FROM comments WHERE parent_id IN (SELECT id FROM comments WHERE user_id = ?)", (uid,))
+        conn.execute("DELETE FROM comments WHERE user_id = ?", (uid,))
+        for parent_id in parents:
+            tidy_deleted_parent(conn, parent_id)
+        conn.execute("DELETE FROM sessions WHERE user_id = ?", (uid,))
+        conn.execute("DELETE FROM blog_visits WHERE blog_id = ?", (uid,))
+        conn.execute("DELETE FROM neighbors WHERE user_id = ? OR blog_id = ?", (uid, uid))
+        conn.execute("DELETE FROM users WHERE id = ?", (uid,))
+        # 올린 파일: 남은 글·댓글·프로필·사이트 설정 어디에도 안 쓰이면 기록과 실제 파일을 지움.
+        # 다른 곳에 주소가 붙어 있으면 깨지지 않게 파일은 남기고 주인만 비움
+        gone_files = []
+        for (name,) in conn.execute("SELECT stored_name FROM files WHERE user_id = ?", (uid,)).fetchall():
+            url = f"/uploads/{name}"
+            in_use = conn.execute(
+                "SELECT 1 FROM posts WHERE instr(content, ?) UNION ALL SELECT 1 FROM comments WHERE instr(content, ?) "
+                "UNION ALL SELECT 1 FROM users WHERE avatar = ? UNION ALL SELECT 1 FROM settings WHERE value = ? LIMIT 1",
+                (url, url, url, url),
+            ).fetchone()
+            if in_use:
+                conn.execute("UPDATE files SET user_id = NULL WHERE stored_name = ?", (name,))
+            else:
+                conn.execute("DELETE FROM files WHERE stored_name = ?", (name,))
+                gone_files.append(name)
+    # 실제 파일은 DB 정리가 끝난(커밋된) 뒤에 지움
+    for name in gone_files:
+        try:
+            os.remove(os.path.join(UPLOAD_DIR, os.path.basename(name)))
+        except FileNotFoundError:
+            pass
+
+
 class ApiError(Exception):
     def __init__(self, status, msg):
         self.status, self.msg = status, msg
@@ -765,10 +858,18 @@ class Handler(SimpleHTTPRequestHandler):
             conn.execute("DELETE FROM sso_nonces WHERE expires < ?", (time.time(),))
             if conn.execute("SELECT 1 FROM sso_nonces WHERE nonce = ?", (t["nonce"],)).fetchone():
                 raise ApiError(400, "이미 쓴 로그인 정보예요. 다시 로그인해 주세요.")
-            linked = conn.execute("SELECT id FROM users WHERE auth_uid = ?", (uid,)).fetchone()
+            linked = conn.execute("SELECT id, auth_joined, auth_nick_at FROM users WHERE auth_uid = ?", (uid,)).fetchone()
             created = False
+            joined = str(t.get("joined", ""))
+            nick_at = int(t.get("nick_at", 0) or 0)
             if linked:
                 blog_uid = linked["id"]
+                # 회원 DB를 새로 만들어 번호가 다시 쓰이면, 다른 사람이 예전 블로그로 들어오지 못하게
+                if linked["auth_joined"] and joined and linked["auth_joined"] != joined:
+                    raise ApiError(409, "회원 정보가 블로그 기록과 맞지 않아요. 관리자에게 문의해 주세요.")
+                # 회원 페이지에서 닉네임을 바꿨으면 블로그 닉네임도 맞춤 (블로그에서 바꾼 닉네임은 그대로)
+                if nick_at > (linked["auth_nick_at"] or 0):
+                    conn.execute("UPDATE users SET nickname = ?, auth_nick_at = ? WHERE id = ?", (nickname, nick_at, blog_uid))
             else:
                 same = conn.execute("SELECT id, password_hash, role, auth_uid FROM users WHERE username = ?", (username,)).fetchone()
                 if same:
@@ -797,6 +898,10 @@ class Handler(SimpleHTTPRequestHandler):
                          str(t.get("bio", "")).strip()[:200], "", json.dumps(CATEGORIES, ensure_ascii=False), uid),
                     ).lastrowid
                     created = True
+            if joined:
+                conn.execute("UPDATE users SET auth_joined = ? WHERE id = ? AND auth_joined IS NULL", (joined, blog_uid))
+            if created or not linked:
+                conn.execute("UPDATE users SET auth_nick_at = MAX(auth_nick_at, ?) WHERE id = ?", (nick_at, blog_uid))
             # 입장권은 한 번만 (성공했을 때 소모)
             conn.execute("INSERT INTO sso_nonces VALUES (?, ?)", (t["nonce"], int(t["exp"])))
         self.start_session(blog_uid, 201 if created else 200, {"new": created})
@@ -929,56 +1034,49 @@ class Handler(SimpleHTTPRequestHandler):
         self.require_admin()
         uid = int(parts[0])
         with db() as conn:
-            row = conn.execute("SELECT role FROM users WHERE id = ?", (uid,)).fetchone()
-            if not row:
-                raise ApiError(404, "없는 회원입니다.")
-            if row["role"] == "admin":
-                raise ApiError(400, "관리자 계정은 삭제할 수 없습니다.")
-            # 탈퇴시킨 회원의 글·댓글도 함께 정리
-            # (foreign_keys가 꺼져 있어 ON DELETE CASCADE가 안 돌아감. 글을 지우기 전에 그 글에 달린 댓글·공감부터)
-            conn.execute("DELETE FROM comments WHERE post_id IN (SELECT id FROM posts WHERE author_id = ?)", (uid,))
-            conn.execute("DELETE FROM likes WHERE user_id = ? OR post_id IN (SELECT id FROM posts WHERE author_id = ?)", (uid, uid))
-            conn.execute("DELETE FROM posts WHERE author_id = ?", (uid,))
-            # 이 회원의 답글은 지우고, 남의 답글이 달린 이 회원의 댓글은 '삭제된 댓글입니다' 자리로 남김
-            parents = [r[0] for r in conn.execute(
-                "SELECT DISTINCT parent_id FROM comments WHERE user_id = ? AND parent_id IS NOT NULL", (uid,)
-            ).fetchall()]
-            conn.execute("DELETE FROM comments WHERE user_id = ? AND parent_id IS NOT NULL", (uid,))
-            conn.execute(
-                "UPDATE comments SET deleted = 1, name = '', content = '', password_hash = '', user_id = NULL "
-                "WHERE user_id = ? AND id IN (SELECT parent_id FROM comments WHERE parent_id IS NOT NULL AND deleted = 0)",
-                (uid,),
-            )
-            conn.execute("DELETE FROM comments WHERE parent_id IN (SELECT id FROM comments WHERE user_id = ?)", (uid,))
-            conn.execute("DELETE FROM comments WHERE user_id = ?", (uid,))
-            for parent_id in parents:
-                tidy_deleted_parent(conn, parent_id)
-            conn.execute("DELETE FROM sessions WHERE user_id = ?", (uid,))
-            conn.execute("DELETE FROM blog_visits WHERE blog_id = ?", (uid,))
-            conn.execute("DELETE FROM neighbors WHERE user_id = ? OR blog_id = ?", (uid, uid))
-            conn.execute("DELETE FROM users WHERE id = ?", (uid,))
-            # 올린 파일: 남은 글·댓글·프로필·사이트 설정 어디에도 안 쓰이면 기록과 실제 파일을 지움.
-            # 다른 곳에 주소가 붙어 있으면 깨지지 않게 파일은 남기고 주인만 비움
-            gone_files = []
-            for (name,) in conn.execute("SELECT stored_name FROM files WHERE user_id = ?", (uid,)).fetchall():
-                url = f"/uploads/{name}"
-                in_use = conn.execute(
-                    "SELECT 1 FROM posts WHERE instr(content, ?) UNION ALL SELECT 1 FROM comments WHERE instr(content, ?) "
-                    "UNION ALL SELECT 1 FROM users WHERE avatar = ? UNION ALL SELECT 1 FROM settings WHERE value = ? LIMIT 1",
-                    (url, url, url, url),
-                ).fetchone()
-                if in_use:
-                    conn.execute("UPDATE files SET user_id = NULL WHERE stored_name = ?", (name,))
-                else:
-                    conn.execute("DELETE FROM files WHERE stored_name = ?", (name,))
-                    gone_files.append(name)
-        # 실제 파일은 DB 정리가 끝난(커밋된) 뒤에 지움
-        for name in gone_files:
-            try:
-                os.remove(os.path.join(UPLOAD_DIR, os.path.basename(name)))
-            except FileNotFoundError:
-                pass
+            row = conn.execute("SELECT role, auth_uid FROM users WHERE id = ?", (uid,)).fetchone()
+        if not row:
+            raise ApiError(404, "없는 회원입니다.")
+        if row["role"] == "admin":
+            raise ApiError(400, "관리자 계정은 삭제할 수 없습니다.")
+        if row["auth_uid"] is not None:
+            # 회원 서버(PHP) 계정부터 지우고, 성공했을 때만 블로그를 지움 (한쪽만 남지 않게)
+            r = auth_post("/bridge_delete.php", {"t": sign_bridge(
+                {"act": "delete_member", "uid": int(row["auth_uid"]), "nonce": secrets.token_hex(16)}
+            )})
+            if r is None or r[0] != 200 or not r[1].get("ok"):
+                raise ApiError(503, "회원 서버에 연결할 수 없어 탈퇴를 진행하지 않았어요. 회원 서버를 켠 뒤 다시 시도해 주세요.")
+        delete_blog_account(uid)
         self.send_json({"ok": True})
+
+    # ---------- 회원 서버와 주고받기 (서명된 요청만) ----------
+    def api_GET_bridge(self, parts, _):
+        """회원 서버가 '회원가입 허용' 값을 읽어 감 (서명해서 줌)."""
+        if parts != ["signup"]:
+            raise ApiError(404, "없는 주소입니다.")
+        with db() as conn:
+            allow = conn.execute("SELECT value FROM settings WHERE key = 'allow_signup'").fetchone()[0] == "1"
+        self.send_json({"t": sign_bridge({"act": "signup_state", "allow": allow})})
+
+    def api_POST_bridge(self, parts, _):
+        """회원 서버에서 회원이 스스로 탈퇴할 때 블로그 계정을 먼저 지움. 여기서는 회원 서버를 다시 부르지 않음."""
+        if parts != ["delete_member"]:
+            raise ApiError(404, "없는 주소입니다.")
+        b = self.body()
+        data = read_bridge(b.get("t", "") if isinstance(b, dict) else "", "delete_member")
+        if not data or int(data.get("uid", 0)) <= 0 or len(str(data.get("nonce", ""))) < 16:
+            raise ApiError(400, "서명이 올바르지 않아요.")
+        with db() as conn:
+            conn.execute("DELETE FROM sso_nonces WHERE expires < ?", (time.time(),))
+            if conn.execute("SELECT 1 FROM sso_nonces WHERE nonce = ?", (data["nonce"],)).fetchone():
+                raise ApiError(400, "이미 처리한 요청이에요.")
+            conn.execute("INSERT INTO sso_nonces VALUES (?, ?)", (data["nonce"], int(data["exp"])))
+            row = conn.execute("SELECT id, role FROM users WHERE auth_uid = ?", (int(data["uid"]),)).fetchone()
+        if row and row["role"] == "admin":
+            raise ApiError(400, "관리자 계정은 탈퇴할 수 없어요.")
+        if row:
+            delete_blog_account(row["id"])
+        self.send_json({"ok": True, "deleted": bool(row)})
 
     # ---------- 블로그들 ----------
     def visitor_id(self):

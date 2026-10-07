@@ -1196,7 +1196,7 @@ async function renderMe() {
         <label class="field"><span>아이디</span><input value="${esc(u.username)}" disabled></label>
         <label class="field"><span>닉네임</span><input name="nickname" value="${esc(u.nickname)}" required minlength="2" maxlength="20"></label>
         ${isOwner ? '<p class="hint">관리자 비밀번호는 서버를 켤 때 BLOG_PASSWORD로 정해요.</p>'
-          : u.auth_uid ? `<p class="hint">비밀번호와 자기소개는 <a class="link" href="${esc(blog.auth_url)}/index.php" target="_blank" rel="noopener">회원 페이지</a>에서 관리해요.</p>` : `
+          : u.auth_uid ? `<p class="hint">비밀번호·자기소개·회원 탈퇴는 <a class="link" href="${esc(blog.auth_url)}/profile.php" target="_blank" rel="noopener">회원 페이지 내 정보 수정</a>에서 해요. 회원 페이지에서 바꾼 닉네임은 다음에 블로그로 들어올 때 반영돼요.</p>` : `
         <label class="field"><span>현재 비밀번호</span><input type="password" name="current_password" autocomplete="current-password"></label>
         <label class="field"><span>새 비밀번호</span><input type="password" name="new_password" autocomplete="new-password" minlength="8">
           <small class="hint">바꿀 때만 입력하세요</small></label>`}

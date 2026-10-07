@@ -12,6 +12,11 @@ if (!$pending || time() - $pending['at'] > 15 * 60) {
 if (current_user()) {
     redirect('index.php');
 }
+if (!signup_open()) {
+    unset($_SESSION['social_pending']);
+    flash(SIGNUP_CLOSED_MESSAGE);
+    redirect('login.php' . return_qs());
+}
 
 $label = PROVIDERS[$pending['provider']]['label'];
 $errors = [];

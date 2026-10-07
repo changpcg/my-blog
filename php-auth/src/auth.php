@@ -78,10 +78,15 @@ function current_user(): ?array
     if (empty($_SESSION['uid'])) {
         return null;
     }
-    $st = db()->prepare('SELECT id, username, nickname, bio, created_at FROM users WHERE id = ?');
+    $st = db()->prepare('SELECT id, username, nickname, bio, created_at, session_ver, nickname_at FROM users WHERE id = ?');
     $st->execute([$_SESSION['uid']]);
     $user = $st->fetch();
-    return $user ?: null;
+    // 탈퇴했거나, 다른 곳에서 비밀번호를 바꿨으면 이 브라우저 로그인은 끝
+    if (!$user || (int)$user['session_ver'] !== (int)($_SESSION['ver'] ?? 0)) {
+        unset($_SESSION['uid'], $_SESSION['ver']);
+        return null;
+    }
+    return $user;
 }
 
 function login_user(int $uid): void
@@ -89,6 +94,56 @@ function login_user(int $uid): void
     // 로그인할 때 세션 번호를 새로 발급해서 '세션 고정' 공격을 막음
     session_regenerate_id(true);
     $_SESSION['uid'] = $uid;
+    $st = db()->prepare('SELECT session_ver FROM users WHERE id = ?');
+    $st->execute([$uid]);
+    $_SESSION['ver'] = (int)$st->fetchColumn();
+}
+
+// ---------- 회원가입 허용 (블로그 사이트 설정을 따름) ----------
+const SIGNUP_CACHE_SECONDS = 60;
+
+/**
+ * 지금 새 가입을 받는지. 블로그가 서명해 준 값을 1분 동안 기억해 씀.
+ * 블로그에 물어볼 수 없으면 마지막으로 받은 값, 한 번도 못 받았으면 '닫힘'(안전한 쪽).
+ */
+function signup_open(): bool
+{
+    $pdo = db();
+    $st = $pdo->prepare("SELECT value, fetched_at FROM bridge_cache WHERE key = 'signup'");
+    $st->execute();
+    $row = $st->fetch();
+    if ($row && (int)$row['fetched_at'] > time() - SIGNUP_CACHE_SECONDS) {
+        return $row['value'] === '1';
+    }
+    $r = blog_call('GET', '/api/bridge/signup');
+    $data = ($r && $r[0] === 200 && is_string($r[1]['t'] ?? null)) ? read_bridge($r[1]['t'], 'signup_state') : null;
+    if ($data === null) {
+        return $row ? $row['value'] === '1' : false;
+    }
+    $value = !empty($data['allow']) ? '1' : '0';
+    $pdo->prepare("INSERT OR REPLACE INTO bridge_cache (key, value, fetched_at) VALUES ('signup', ?, ?)")
+        ->execute([$value, time()]);
+    return $value === '1';
+}
+
+const SIGNUP_CLOSED_MESSAGE = '지금은 새 가입을 받지 않아요. 이미 가입한 회원은 로그인할 수 있어요.';
+
+/** 회원 서버에서 회원 한 명을 지움 (SNS 연결은 외래 키로 함께, 로그인 실패 기록도) */
+function delete_member_local(int $uid): bool
+{
+    $pdo = db();
+    $st = $pdo->prepare('SELECT username FROM users WHERE id = ?');
+    $st->execute([$uid]);
+    $username = $st->fetchColumn();
+    if ($username === false) {
+        return false;
+    }
+    $pdo->beginTransaction();
+    $pdo->prepare('DELETE FROM social_accounts WHERE user_id = ?')->execute([$uid]);
+    $pdo->prepare('DELETE FROM login_attempts WHERE username = ?')->execute([$username]);
+    $pdo->prepare('DELETE FROM users WHERE id = ?')->execute([$uid]);
+    $pdo->commit();
+    return true;
 }
 
 /** 폼 값 하나를 문자열로 (배열 등 이상한 값은 빈 문자열) */

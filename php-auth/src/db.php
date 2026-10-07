@@ -68,6 +68,22 @@ function db(): PDO
             expires INTEGER NOT NULL
         )'
     );
+    // 002: 비밀번호를 바꾸면 다른 브라우저 로그인을 끊는 번호, 닉네임 바꾼 시각
+    $cols = $pdo->query('PRAGMA table_info(users)')->fetchAll(PDO::FETCH_COLUMN, 1);
+    if (!in_array('session_ver', $cols, true)) {
+        $pdo->exec('ALTER TABLE users ADD COLUMN session_ver INTEGER NOT NULL DEFAULT 0');
+    }
+    if (!in_array('nickname_at', $cols, true)) {
+        $pdo->exec('ALTER TABLE users ADD COLUMN nickname_at INTEGER NOT NULL DEFAULT 0');
+    }
+    // 블로그에서 읽어 온 값 잠깐 기억 (회원가입 허용 등)
+    $pdo->exec(
+        'CREATE TABLE IF NOT EXISTS bridge_cache (
+            key        TEXT    PRIMARY KEY,
+            value      TEXT    NOT NULL,
+            fetched_at INTEGER NOT NULL
+        )'
+    );
 
     return $pdo;
 }

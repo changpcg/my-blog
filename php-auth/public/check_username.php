@@ -12,4 +12,7 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
 }
 check_csrf();
 
+if (!signup_open()) {
+    exit(json_encode(['ok' => false, 'message' => SIGNUP_CLOSED_MESSAGE], JSON_UNESCAPED_UNICODE));
+}
 echo json_encode(check_username(post_str('username')), JSON_UNESCAPED_UNICODE);

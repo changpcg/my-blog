@@ -51,6 +51,8 @@ function make_ticket(array $user): string
         'username' => $user['username'],
         'nickname' => $user['nickname'],
         'bio' => $user['bio'],
+        'joined' => (string)($user['created_at'] ?? ''),
+        'nick_at' => (int)($user['nickname_at'] ?? 0),
         'exp' => time() + TICKET_TTL,
         'nonce' => bin2hex(random_bytes(16)),
     ], JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR));
@@ -79,6 +81,50 @@ function read_logout_ticket(string $t): ?array
         return null;
     }
     return $data;
+}
+
+/** 서버 사이에 주고받는 서명 값 만들기 (act로 용도 구분, 1분 만료) */
+function sign_bridge(array $data): string
+{
+    $data['exp'] = $data['exp'] ?? time() + 60;
+    $payload = b64url(json_encode($data, JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR));
+    return $payload . '.' . hash_hmac('sha256', $payload, sso_key());
+}
+
+/** 서명 값 확인. 서명·act·만료가 맞으면 내용, 아니면 null */
+function read_bridge(string $t, string $act): ?array
+{
+    $parts = explode('.', $t, 2);
+    if (count($parts) !== 2 || !hash_equals(hash_hmac('sha256', $parts[0], sso_key()), $parts[1])) {
+        return null;
+    }
+    $data = json_decode((string)base64_decode(strtr($parts[0], '-_', '+/')), true);
+    if (!is_array($data) || ($data['act'] ?? '') !== $act || (int)($data['exp'] ?? 0) < time()) {
+        return null;
+    }
+    return $data;
+}
+
+/**
+ * 블로그 서버 호출 (3초 제한). 성공하면 [상태코드, JSON 배열], 연결 실패면 null.
+ * curl 없이 PHP 기본 기능만 사용.
+ */
+function blog_call(string $method, string $path, ?array $json = null): ?array
+{
+    $opts = ['http' => [
+        'method' => $method, 'timeout' => 3, 'ignore_errors' => true,
+        'header' => "Accept: application/json\r\n" . ($json !== null ? "Content-Type: application/json\r\n" : ''),
+    ]];
+    if ($json !== null) {
+        $opts['http']['content'] = json_encode($json, JSON_UNESCAPED_UNICODE);
+    }
+    $body = @file_get_contents(BLOG_URL . $path, false, stream_context_create($opts));
+    if ($body === false || !isset($http_response_header[0])) {
+        return null;
+    }
+    preg_match('#\s(\d{3})\s#', $http_response_header[0] . ' ', $m);
+    $data = json_decode($body, true);
+    return [(int)($m[1] ?? 0), is_array($data) ? $data : []];
 }
 
 /** 로그인한 회원을 입장권과 함께 블로그로 보냄 */

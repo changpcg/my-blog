@@ -44,6 +44,10 @@ if ($owner !== null) {
     redirect('index.php');
 }
 
-// 처음 온 SNS 계정: 아이디·닉네임·자기소개를 받아서 가입 (15분 안에)
+// 처음 온 SNS 계정: 아이디·닉네임·자기소개를 받아서 가입 (15분 안에). 가입을 닫아 두었으면 안내만
+if (!signup_open()) {
+    flash(SIGNUP_CLOSED_MESSAGE);
+    redirect('login.php' . $backTo($r));
+}
 $_SESSION['social_pending'] = $r + ['at' => time()];
 redirect('social_signup.php' . $backTo($r));

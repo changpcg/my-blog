@@ -6,6 +6,15 @@ if (current_user()) {
     redirect(from_blog() ? 'login.php?return=blog' : 'index.php');
 }
 
+// 관리자가 블로그 사이트 설정에서 회원가입을 꺼 두었으면 가입 화면 대신 안내만
+if (!signup_open()) {
+    page_start('회원가입');
+    echo '<section class="card"><h1>회원가입</h1><p>' . h(SIGNUP_CLOSED_MESSAGE) . '</p>'
+        . '<p class="foot"><a href="login.php' . h(return_qs()) . '">로그인으로</a></p></section>';
+    page_end();
+    exit;
+}
+
 $errors = [];
 $old = ['username' => '', 'nickname' => '', 'bio' => ''];
 $check = null; // 아이디 중복 확인 결과 (자바스크립트 없이 버튼을 눌렀을 때)

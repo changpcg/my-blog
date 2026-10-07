@@ -86,3 +86,7 @@ input[aria-invalid="true"] { border-color: var(--danger); background: color-mix(
 .back-home:hover { transform: translate(-1px, -1px); box-shadow: 3px 3px 0 var(--ink); }
 .back-home:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
 @media (max-width: 480px) { .top-nav { margin-top: -8px; } }
+
+/* 002: 내 정보 수정 화면 */
+.card + .card { margin-top: 20px; }
+.btn.danger { background: var(--danger); border-color: var(--danger); color: #fff; }

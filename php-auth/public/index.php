@@ -36,9 +36,10 @@ if (!$user): ?>
       </li>
     <?php endforeach; ?>
   </ul>
-  <?php if (!has_password((int)$user['id'])): ?><p class="muted">SNS로 가입한 계정이라 비밀번호 없이 SNS로만 로그인해요.</p><?php endif; ?>
+  <?php if (!has_password((int)$user['id'])): ?><p class="muted">SNS로 가입한 계정이라 SNS로 로그인해요. 내 정보 수정에서 비밀번호를 만들면 아이디로도 로그인할 수 있어요.</p><?php endif; ?>
   <?php endif; ?>
   <a class="btn primary blog-go" href="login.php?return=blog">내 블로그로 가기 →</a>
+  <a class="btn wide" href="profile.php">내 정보 수정</a>
   <form method="post" action="logout.php">
     <?= csrf_field() ?>
     <button class="btn">로그아웃</button>
