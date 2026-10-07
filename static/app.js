@@ -122,9 +122,20 @@ async function loadBlog() {
 // 로그아웃: 블로그를 로그아웃한 뒤 회원 페이지(PHP)도 거쳐서 함께 로그아웃하고 블로그 홈으로 돌아옴
 async function logout() {
   const r = await api('logout', { method: 'POST' });
-  if (r.auth_logout_url && await reachable(r.auth_url)) {
+  if (r.auth_logout && await reachable(r.auth_url)) {
     try { sessionStorage.setItem('justLoggedOut', '1'); } catch { /* 무시 */ }
-    location.href = r.auth_logout_url;
+    // 로그아웃 표는 주소가 아니라 POST 폼으로 보냄 (회원 서버가 확인 후 블로그 홈으로 돌려보냄)
+    const f = document.createElement('form');
+    f.method = 'post';
+    f.action = r.auth_logout.action;
+    f.hidden = true;
+    const t = document.createElement('input');
+    t.type = 'hidden';
+    t.name = 't';
+    t.value = r.auth_logout.t;
+    f.appendChild(t);
+    document.body.appendChild(f);
+    f.submit();
     return;
   }
   // 회원 서버가 꺼져 있으면 블로그만 로그아웃
@@ -616,7 +627,8 @@ async function renderComments(postId) {
       if (pw === null) return;
     } else if (!confirm('댓글을 삭제할까요?')) return;
     try {
-      await api(`comments/${b.dataset.id}?password=${enc(pw)}`, { method: 'DELETE' });
+      // 비밀번호는 주소가 아니라 본문으로 (서버 기록·방문 기록에 남지 않게)
+      await api('comments/' + b.dataset.id, { method: 'DELETE', body: pw ? { password: pw } : undefined });
       toast('댓글을 삭제했습니다.');
       renderComments(postId);
     } catch (err) { toast(err.message); }

@@ -14,6 +14,7 @@ import json
 import os
 import re
 import secrets
+import shutil
 import sqlite3
 import time
 import threading
@@ -39,6 +40,10 @@ ADMIN_USERNAME = "admin"
 USERNAME_RE = re.compile(r"^[a-z0-9_]{4,20}$")
 PAGE_SIZE = 8
 SESSION_TTL = 60 * 60 * 24 * 14
+# 방문자 댓글 삭제 비밀번호: 15분 안에 같은 IP 5번, IP와 관계없이 20번 틀리면 잠금 (SEC-03과 같은 규칙)
+PW_WINDOW = 15 * 60
+PW_MAX_PER_IP = 5
+PW_MAX_ALL = 20
 POST_TYPES = {"insight": "인사이트", "faq": "자주 묻는 질문", "glossary": "용어 사전", "daily": "일상"}
 CATEGORIES = ["마케팅", "AI/기술", "데이터"]
 IMAGE_TYPES = {"image/png": ".png", "image/jpeg": ".jpg", "image/gif": ".gif", "image/webp": ".webp"}
@@ -234,7 +239,60 @@ def init_db():
             )
             conn.execute("DELETE FROM comments WHERE post_id NOT IN (SELECT id FROM posts)")
             conn.execute("INSERT INTO settings VALUES ('cleaned_orphans', '1')")
+        # 방문자 댓글 비밀번호 실패 기록 (잠금용)
+        conn.execute("CREATE TABLE IF NOT EXISTS comment_pw_fails (comment_id INTEGER NOT NULL, ip TEXT NOT NULL, at INTEGER NOT NULL)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_comment_pw_fails ON comment_pw_fails (comment_id, at)")
         conn.execute("DELETE FROM sessions WHERE expires < ?", (time.time(),))
+
+
+def restore_orphan_replies():
+    """예전 회원 탈퇴가 부모 댓글만 지워 남은 답글: 같은 번호로 '삭제된 댓글' 자리를 되살려 다시 보이게 (딱 한 번)."""
+    with db() as conn:
+        if conn.execute("SELECT 1 FROM settings WHERE key = 'restored_orphan_replies'").fetchone():
+            return
+        orphans = conn.execute(
+            "SELECT parent_id, MIN(post_id) AS post_id, MIN(created_at) AS created_at FROM comments "
+            "WHERE parent_id IS NOT NULL AND parent_id NOT IN (SELECT id FROM comments) GROUP BY parent_id"
+        ).fetchall()
+    if orphans:
+        backup = os.path.join(BASE_DIR, "blog.backup-before-reply-restore.db")
+        if not os.path.exists(backup):
+            shutil.copy2(DB_PATH, backup)
+    with db() as conn:
+        for o in orphans:
+            conn.execute(
+                "INSERT INTO comments (id, post_id, name, password_hash, content, created_at, user_id, parent_id, deleted) "
+                "VALUES (?, ?, '', '', '', ?, NULL, NULL, 1)",
+                (o["parent_id"], o["post_id"], o["created_at"]),
+            )
+        conn.execute("INSERT INTO settings VALUES ('restored_orphan_replies', '1')")
+
+
+def tidy_deleted_parent(conn, parent_id):
+    """'삭제된 댓글' 자리에 살아 있는 답글이 하나도 없으면 자리와 그 아래 지운 답글까지 정리."""
+    if parent_id is None:
+        return
+    if not conn.execute("SELECT 1 FROM comments WHERE parent_id = ? AND deleted = 0", (parent_id,)).fetchone():
+        conn.execute("DELETE FROM comments WHERE id = ? AND deleted = 1", (parent_id,))
+        conn.execute("DELETE FROM comments WHERE parent_id = ? AND deleted = 1", (parent_id,))
+
+
+def pw_lock_minutes(conn, cid, ip):
+    """댓글 비밀번호 잠금이면 남은 분(1 이상), 아니면 0. 15분 지난 실패 기록은 여기서 정리."""
+    now = int(time.time())
+    conn.execute("DELETE FROM comment_pw_fails WHERE at <= ?", (now - PW_WINDOW,))
+    per_ip = conn.execute(
+        "SELECT COUNT(*), MIN(at) FROM comment_pw_fails WHERE comment_id = ? AND ip = ?", (cid, ip)
+    ).fetchone()
+    total = conn.execute("SELECT COUNT(*), MIN(at) FROM comment_pw_fails WHERE comment_id = ?", (cid,)).fetchone()
+    first = None
+    if per_ip[0] >= PW_MAX_PER_IP:
+        first = per_ip[1]
+    if total[0] >= PW_MAX_ALL:
+        first = total[1] if first is None else min(first, total[1])
+    if first is None:
+        return 0
+    return max(1, -(-(first + PW_WINDOW - now) // 60))
 
 
 SAMPLE_POSTS = [
@@ -517,10 +575,11 @@ def sso_key():
     return key.encode()
 
 
-def make_logout_ticket():
-    """PHP 회원 페이지도 함께 로그아웃시키는 1분짜리 서명 표 (다른 사이트가 남을 로그아웃시키지 못하게 서명)."""
+def make_logout_ticket(auth_uid):
+    """PHP 회원 페이지도 함께 로그아웃시키는 1분짜리 서명 표.
+    회원 번호(uid)를 넣어 그 회원에게만 통하고, PHP가 nonce를 기록해 한 번만 쓰임."""
     payload = base64.urlsafe_b64encode(json.dumps(
-        {"act": "logout", "exp": int(time.time()) + 60, "nonce": secrets.token_hex(8)}
+        {"act": "logout", "uid": int(auth_uid), "exp": int(time.time()) + 60, "nonce": secrets.token_hex(16)}
     ).encode()).decode().rstrip("=")
     return payload + "." + hmac.new(sso_key(), payload.encode(), hashlib.sha256).hexdigest()
 
@@ -755,15 +814,18 @@ class Handler(SimpleHTTPRequestHandler):
         self.start_session(row["id"])
 
     def api_POST_logout(self, _, __):
+        me = self.user  # 세션을 지우기 전에 누구인지 확인
         with db() as conn:
             conn.execute("DELETE FROM sessions WHERE token = ?", (self.cookie("session") or "",))
-        # 블로그에서 로그아웃하면 회원 페이지(PHP)도 함께: 브라우저가 이 주소를 거쳐 블로그로 돌아옴
-        try:
-            auth_logout = f"{AUTH_URL}/sso_logout.php?t={quote(make_logout_ticket())}"
-        except Exception:  # noqa: 키 파일을 못 읽으면 블로그만 로그아웃
-            auth_logout = None
+        # 회원 페이지(PHP)와 연결된 회원만 함께 로그아웃: 화면이 이 표를 POST 폼으로 회원 서버에 보냄 (주소에 안 실림)
+        auth_logout = None
+        if me and me.get("auth_uid"):
+            try:
+                auth_logout = {"action": f"{AUTH_URL}/sso_logout.php", "t": make_logout_ticket(me["auth_uid"])}
+            except Exception:  # noqa: 키 파일을 못 읽으면 블로그만 로그아웃
+                auth_logout = None
         self.send_json(
-            {"ok": True, "auth_url": AUTH_URL, "auth_logout_url": auth_logout},
+            {"ok": True, "auth_url": AUTH_URL, "auth_logout": auth_logout},
             headers={"Set-Cookie": "session=; Path=/; Max-Age=0"},
         )
 
@@ -877,7 +939,20 @@ class Handler(SimpleHTTPRequestHandler):
             conn.execute("DELETE FROM comments WHERE post_id IN (SELECT id FROM posts WHERE author_id = ?)", (uid,))
             conn.execute("DELETE FROM likes WHERE user_id = ? OR post_id IN (SELECT id FROM posts WHERE author_id = ?)", (uid, uid))
             conn.execute("DELETE FROM posts WHERE author_id = ?", (uid,))
+            # 이 회원의 답글은 지우고, 남의 답글이 달린 이 회원의 댓글은 '삭제된 댓글입니다' 자리로 남김
+            parents = [r[0] for r in conn.execute(
+                "SELECT DISTINCT parent_id FROM comments WHERE user_id = ? AND parent_id IS NOT NULL", (uid,)
+            ).fetchall()]
+            conn.execute("DELETE FROM comments WHERE user_id = ? AND parent_id IS NOT NULL", (uid,))
+            conn.execute(
+                "UPDATE comments SET deleted = 1, name = '', content = '', password_hash = '', user_id = NULL "
+                "WHERE user_id = ? AND id IN (SELECT parent_id FROM comments WHERE parent_id IS NOT NULL AND deleted = 0)",
+                (uid,),
+            )
+            conn.execute("DELETE FROM comments WHERE parent_id IN (SELECT id FROM comments WHERE user_id = ?)", (uid,))
             conn.execute("DELETE FROM comments WHERE user_id = ?", (uid,))
+            for parent_id in parents:
+                tidy_deleted_parent(conn, parent_id)
             conn.execute("DELETE FROM sessions WHERE user_id = ?", (uid,))
             conn.execute("DELETE FROM blog_visits WHERE blog_id = ?", (uid,))
             conn.execute("DELETE FROM neighbors WHERE user_id = ? OR blog_id = ?", (uid, uid))
@@ -1539,6 +1614,12 @@ class Handler(SimpleHTTPRequestHandler):
 
     def api_DELETE_comments(self, parts, q):
         cid = int(parts[0])
+        if "password" in q:
+            raise ApiError(400, "비밀번호는 주소에 넣을 수 없어요. 화면을 새로 고친 뒤 다시 시도해 주세요.")
+        b = self.body()
+        pw = str(b.get("password", "")) if isinstance(b, dict) else ""
+        ip = self.client_address[0]
+        wrong = False
         with db() as conn:
             row = conn.execute(
                 "SELECT c.password_hash, c.user_id, c.parent_id, c.deleted, p.author_id AS post_author FROM comments c "
@@ -1546,11 +1627,24 @@ class Handler(SimpleHTTPRequestHandler):
                 (cid,),
             ).fetchone()
             if not row or row["deleted"]:
-                raise ApiError(404, "댓글이 없습니다.")
+                raise ApiError(404, "댓글을 찾을 수 없어요.")
             mine = self.user and self.user["id"] in (row["user_id"], row["post_author"])
-            guest_ok = row["user_id"] is None and check_pw(q.get("password", ""), row["password_hash"])
-            if not (self.is_admin() or mine or guest_ok):
-                raise ApiError(403, "비밀번호가 틀렸거나 지울 권한이 없습니다.")
+            if not (self.is_admin() or mine):
+                if row["user_id"] is not None:
+                    raise ApiError(403, "지울 권한이 없습니다.")
+                # 방문자 댓글: 잠금 확인 → 비밀번호 확인 (틀리면 기록)
+                left = pw_lock_minutes(conn, cid, ip)
+                if left:
+                    raise ApiError(429, f"비밀번호를 여러 번 틀렸어요. {left}분 뒤에 다시 시도해 주세요.")
+                if not check_pw(pw, row["password_hash"]):
+                    conn.execute("INSERT INTO comment_pw_fails VALUES (?, ?, ?)", (cid, ip, int(time.time())))
+                    wrong = True
+            if not wrong:
+                conn.execute("DELETE FROM comment_pw_fails WHERE comment_id = ?", (cid,))
+        if wrong:
+            time.sleep(0.5)
+            raise ApiError(403, "비밀번호가 맞지 않아요.")
+        with db() as conn:
             has_replies = conn.execute("SELECT 1 FROM comments WHERE parent_id = ? AND deleted = 0", (cid,)).fetchone()
             if has_replies:
                 # 답글이 있으면 자리만 남김
@@ -1558,11 +1652,7 @@ class Handler(SimpleHTTPRequestHandler):
             else:
                 conn.execute("DELETE FROM comments WHERE id = ?", (cid,))
                 # 지운 답글이 마지막이었고 원래 댓글이 이미 지워진 상태면 그것도 정리
-                if row["parent_id"] is not None and not conn.execute(
-                    "SELECT 1 FROM comments WHERE parent_id = ? AND deleted = 0", (row["parent_id"],)
-                ).fetchone():
-                    conn.execute("DELETE FROM comments WHERE id = ? AND deleted = 1", (row["parent_id"],))
-                    conn.execute("DELETE FROM comments WHERE parent_id = ? AND deleted = 1", (row["parent_id"],))
+                tidy_deleted_parent(conn, row["parent_id"])
         self.send_json({"ok": True})
 
     # ---------- 이미지 업로드 ----------
@@ -1611,6 +1701,7 @@ if __name__ == "__main__":
             raise SystemExit(1)
         raise
     init_db()
+    restore_orphan_replies()
     print(f"블로그 실행 중 → http://localhost:{PORT}")
     if HOST != "127.0.0.1":
         print(f"같은 와이파이의 다른 기기에서도 접속할 수 있습니다 (주소: 이 컴퓨터의 IP:{PORT})")

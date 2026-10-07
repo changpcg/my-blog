@@ -61,6 +61,13 @@ function db(): PDO
             UNIQUE (user_id, provider)
         )'
     );
+    // 이미 쓴 '함께 로그아웃' 표 번호: 같은 표를 두 번 쓸 수 없게 (만료되면 정리)
+    $pdo->exec(
+        'CREATE TABLE IF NOT EXISTS sso_used_nonces (
+            nonce   TEXT    PRIMARY KEY,
+            expires INTEGER NOT NULL
+        )'
+    );
 
     return $pdo;
 }

@@ -57,6 +57,30 @@ function make_ticket(array $user): string
     return $payload . '.' . hash_hmac('sha256', $payload, sso_key());
 }
 
+/**
+ * 블로그가 만든 '함께 로그아웃' 표 확인. 서명·종류·만료가 맞으면 내용(uid·nonce·exp), 아니면 null.
+ * 회원 번호 확인과 1회용 확인은 sso_logout.php에서 한다.
+ */
+function read_logout_ticket(string $t): ?array
+{
+    $parts = explode('.', $t, 2);
+    if (count($parts) !== 2) {
+        return null;
+    }
+    [$payload, $sig] = $parts;
+    if (!hash_equals(hash_hmac('sha256', $payload, sso_key()), $sig)) {
+        return null;
+    }
+    $data = json_decode((string)base64_decode(strtr($payload, '-_', '+/')), true);
+    if (!is_array($data) || ($data['act'] ?? '') !== 'logout' || (int)($data['exp'] ?? 0) < time()) {
+        return null;
+    }
+    if ((int)($data['uid'] ?? 0) <= 0 || !is_string($data['nonce'] ?? null) || strlen($data['nonce']) < 16) {
+        return null;
+    }
+    return $data;
+}
+
 /** 로그인한 회원을 입장권과 함께 블로그로 보냄 */
 function go_to_blog(array $user): never
 {
