@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>블로그</title>
+  <link rel="preconnect" href="https://cdn.jsdelivr.net">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css">
+  <link rel="stylesheet" id="hljsLight" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/styles/github.min.css" media="(prefers-color-scheme: light)">
+  <link rel="stylesheet" id="hljsDark" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/styles/github-dark.min.css" media="(prefers-color-scheme: dark)">
+  <script>
+    // 화면 모드(시스템/라이트/다크)를 그리기 전에 적용해서 깜빡임 방지
+    (function () {
+      var t = 'system';
+      try { t = localStorage.getItem('theme') || 'system'; } catch (e) {}
+      window.applyTheme = function (mode) {
+        var root = document.documentElement;
+        if (mode === 'light' || mode === 'dark') root.setAttribute('data-theme', mode);
+        else root.removeAttribute('data-theme');
+        var light = document.getElementById('hljsLight'), dark = document.getElementById('hljsDark');
+        if (light && dark) {
+          light.media = mode === 'dark' ? 'not all' : mode === 'light' ? 'all' : '(prefers-color-scheme: light)';
+          dark.media = mode === 'dark' ? 'all' : mode === 'light' ? 'not all' : '(prefers-color-scheme: dark)';
+        }
+      };
+      window.applyTheme(t);
+    })();
+  </script>
+  <link rel="stylesheet" href="/style.css?v=18">
+</head>
+<body>
+  <header class="topbar">
+    <div class="wrap topbar-inner">
+      <a href="#/" class="logo" id="blogTitle">블로그</a>
+      <form class="search" id="searchForm" role="search">
+        <input id="searchInput" type="search" placeholder="검색" aria-label="블로그 검색">
+      </form>
+      <button type="button" class="theme-btn" id="themeBtn" aria-label="화면 모드 바꾸기"></button>
+      <nav class="top-actions" id="topActions"></nav>
+    </div>
+    <nav class="wrap type-nav" id="typeNav" aria-label="글 종류"></nav>
+  </header>
+
+  <div class="wrap layout">
+    <main id="main" tabindex="-1"></main>
+    <aside class="sidebar">
+      <section class="side-box widget" id="widget" aria-label="오늘 날짜와 날씨"></section>
+      <div id="sidebar"></div>
+    </aside>
+  </div>
+
+  <footer class="footer"><div class="wrap" id="footer"></div></footer>
+  <div class="toast" id="toast" role="status"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/highlight.min.js"></script>
+  <script src="/miniroom.js?v=1"></script>
+  <script src="/app.js?v=19"></script>
+  <script src="/food.js?v=13"></script>
+  <script src="/widget.js?v=9"></script>
+</body>
+</html>

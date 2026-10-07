@@ -1,0 +1,10 @@
+.DS_Store
+*.db
+*.db-shm
+*.db-wal
+uploads/
+backup-before-myblog/
+php-auth/db/
+php-auth/db.backup-*/
+php-auth/oauth.config.php
+__pycache__/
