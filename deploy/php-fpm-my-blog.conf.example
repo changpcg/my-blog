@@ -1,0 +1,28 @@
+; my-blog 회원 서버(PHP) 전용 PHP-FPM 풀 예시 — deploy/README.md 6단계
+;
+;   sudo cp deploy/php-fpm-my-blog.conf.example /etc/php/8.3/fpm/pool.d/my-blog.conf
+;   sudo php-fpm8.3 -t && sudo systemctl restart php8.3-fpm
+;
+; 블로그와 같은 사용자(myblog)로 돌려 sso.key·DB·설정 파일을 600/700으로 둘 수 있게 한다.
+
+[my-blog]
+user = myblog
+group = myblog
+
+; Nginx(www-data)만 이 소켓에 붙을 수 있게
+listen = /run/php/my-blog.sock
+listen.owner = www-data
+listen.group = www-data
+listen.mode = 0660
+
+; 개인 블로그 규모: 요청이 있을 때만 작업자를 띄움
+pm = ondemand
+pm.max_children = 5
+pm.process_idle_timeout = 30s
+
+; 환경변수는 기본대로 지운다(clear_env = yes). 설정은 /srv/my-blog/deploy.config.json에서만 읽는다.
+
+php_admin_flag[display_errors] = off
+php_admin_flag[log_errors] = on
+; 설정 오류 등 error_log() 내용을 /var/log/php8.3-fpm.log 로
+catch_workers_output = yes

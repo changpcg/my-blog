@@ -1216,9 +1216,46 @@ async function renderMe() {
   renderPortalSidebar();
 }
 
+// 003: 사이트 설정의 '공개 주소'·'가입 현황' 상자. 회원 서버 상태는 서명된 브리지로 받아 옴(IP는 없음)
+const SNS_LABEL = { kakao: '카카오', naver: '네이버', google: '구글' };
+
+function deployBox(st) {
+  if (!st) return '<p class="hint">상태를 불러오지 못했어요. 화면을 새로 고쳐 주세요.</p>';
+  const d = st.deploy;
+  const a = st.auth;
+  const rows = [
+    ['실행 모드', d.public_mode ? '공개 모드 (https)' : '개발 모드'],
+    ['블로그 주소', `<code>${esc(d.blog_url)}</code>`],
+    ['회원 서버 주소', `<code>${esc(d.auth_url)}</code>`],
+  ];
+  if (a) {
+    rows.push(['SNS 콜백 주소', `<code class="pick">${esc(a.sns.callback_url)}</code>`]);
+    rows.push(['키가 등록된 SNS', a.sns.providers.length ? a.sns.providers.map((p) => esc(SNS_LABEL[p] || p)).join(' · ') : '없음']);
+  }
+  let warn = '';
+  if (!a) warn = '<p class="hint warn" role="status">회원 서버에 연결할 수 없어 SNS 정보를 불러오지 못했어요.</p>';
+  else if (a.public_mode !== d.public_mode) {
+    warn = '<p class="hint warn" role="status">두 서버의 공개 모드 설정이 달라요. 설정 파일을 확인하고 블로그 서버를 다시 켜 주세요.</p>';
+  }
+  return `<dl class="kv">${rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('')}</dl>${warn}
+    <p class="hint">SNS 개발자 콘솔에는 위 콜백 주소를 그대로 등록하세요. 키 값은 화면에 보이지 않아요.</p>`;
+}
+
+function signupBox(st) {
+  const s = st && st.auth && st.auth.signups;
+  if (!s) return '<p class="hint warn" role="status">회원 서버에 연결할 수 없어 가입 현황을 불러오지 못했어요.</p>';
+  const b = s.blocked;
+  return `<p class="signup-stats">새 가입 <strong>${Number(s.created)}</strong>
+      · 막힘: 한 곳에서 너무 많이 ${Number(b.limit_ip)} · 전체 한도 ${Number(b.limit_site)} · 자동 가입 의심 ${Number(b.bot)}</p>
+    ${s.site_limited_now ? `<p class="hint warn" role="status">지금 사이트 전체 가입 제한이 걸려 있어요(1시간 ${Number(s.limits.site_per_hour)}개).</p>` : ''}
+    <p class="hint">한도: 같은 곳에서 1시간 ${Number(s.limits.per_ip_per_hour)}개, 사이트 전체 1시간 ${Number(s.limits.site_per_hour)}개 (deploy.config.json). 방문자 IP는 보이지 않아요.</p>`;
+}
+
 async function renderSettings() {
   if (!blog.is_admin) { location.hash = blog.user ? '#/' : '#/login'; return; }
   const users = await api('users');
+  // 회원 서버가 꺼져 있어도 나머지 설정 화면은 그대로 보이게
+  const status = await api('admin/status').catch(() => null);
   main.innerHTML = `
     <div class="panel wide">
     <form id="setForm" class="card form-card">
@@ -1241,6 +1278,14 @@ async function renderSettings() {
       <label class="switch field"><input type="checkbox" name="allow_signup" ${blog.allow_signup ? 'checked' : ''}> 누구나 회원가입해서 블로그를 만들 수 있게 하기</label>
       <button class="btn primary" style="width:100%">저장</button>
     </form>
+    <section class="card form-card" aria-labelledby="deployTitle">
+      <h2 class="side-title" id="deployTitle">공개 주소</h2>
+      ${deployBox(status)}
+    </section>
+    <section class="card form-card" aria-labelledby="signupTitle">
+      <h2 class="side-title" id="signupTitle">가입 현황 (최근 24시간)</h2>
+      ${signupBox(status)}
+    </section>
     <section class="card form-card">
       <h2 class="side-title">회원 ${users.length}명</h2>
       <table class="user-table">

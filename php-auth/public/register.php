@@ -15,6 +15,11 @@ if (!signup_open()) {
     exit;
 }
 
+// 003: 이 곳(IP)이나 사이트 전체가 가입 한도면 폼 대신 안내
+if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+    signup_limit_page();
+}
+
 $errors = [];
 $old = ['username' => '', 'nickname' => '', 'bio' => ''];
 $check = null; // 아이디 중복 확인 결과 (자바스크립트 없이 버튼을 눌렀을 때)
@@ -38,12 +43,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $errors['username'] = '아이디 중복 확인을 해 주세요.';
         }
         if (!$errors) {
-            // 확인과 가입 사이에 누가 먼저 가입했을 수도 있어서, DB의 UNIQUE 제약으로 한 번 더 막음
-            $uid = create_user($username, $password, $nickname, $bio);
-            if ($uid === null) {
+            // 003: 자동 가입 방지 → 한도 확인과 계정 만들기를 한 트랜잭션으로
+            $botError = signup_bot_error();
+            $res = $botError === null
+                // 확인과 가입 사이에 누가 먼저 가입했을 수도 있어서, DB의 UNIQUE 제약으로 한 번 더 막음
+                ? create_member_guarded(fn() => ['uid' => create_user($username, $password, $nickname, $bio), 'new' => true])
+                : ['uid' => null, 'error' => $botError];
+            $uid = $res['uid'];
+            if ($res['error'] !== null) {
+                $errors['form'] = $res['error'];
+            } elseif ($uid === null) {
                 unset($_SESSION['checked_username']);
                 $errors['username'] = '방금 다른 사람이 이 아이디로 가입했어요. 다른 아이디로 다시 확인해 주세요.';
             } else {
+                signup_token_used();
                 unset($_SESSION['checked_username'], $_SESSION['username_checks']);
                 login_user($uid);
                 if (from_blog()) {
@@ -64,13 +77,15 @@ if ($check === null && $old['username'] !== '' && username_checked($old['usernam
 /** 입력칸 아래 오류 메시지 */
 $err = fn(string $k) => isset($errors[$k]) ? '<small class="error" id="' . $k . '-err">' . h($errors[$k]) . '</small>' : '';
 $aria = fn(string $k) => isset($errors[$k]) ? ' aria-invalid="true" aria-describedby="' . $k . '-err"' : '';
+$formToken = signup_form_token(is_string($_POST['form_token'] ?? null) ? $_POST['form_token'] : null);
 
 page_start('회원가입');
 ?>
 <form class="card" id="signupForm" method="post" action="register.php<?= return_qs() ?>" novalidate>
   <h1>회원가입</h1>
   <?php if (from_blog()): ?><p class="muted note">가입하면 바로 나만의 블로그가 생겨요. 자기소개는 블로그 소개로도 쓰여요.</p><?php endif; ?>
-  <?= csrf_field() ?><?= return_field() ?>
+  <?= csrf_field() ?><?= return_field() ?><?= signup_guard_fields($formToken) ?>
+  <?php if (isset($errors['form'])): ?><p class="error-box" role="alert"><?= h($errors['form']) ?></p><?php endif; ?>
   <?php if (enabled_providers()): ?>
   <?= str_replace('sns-or', 'sns-or top', social_buttons('3초 가입')) ?>
   <p class="sns-or"><span>또는 아이디로 가입</span></p>

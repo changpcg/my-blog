@@ -90,3 +90,7 @@ input[aria-invalid="true"] { border-color: var(--danger); background: color-mix(
 /* 002: 내 정보 수정 화면 */
 .card + .card { margin-top: 20px; }
 .btn.danger { background: var(--danger); border-color: var(--danger); color: #fff; }
+
+/* 003: 자동 가입 방지용 숨은 칸 — 화면 밖으로 (display:none은 일부 봇이 건너뜀) */
+.hp-field { position: absolute; left: -10000px; top: auto; width: 1px; height: 1px; overflow: hidden; }
+form .error-box { margin: 0 0 14px; }

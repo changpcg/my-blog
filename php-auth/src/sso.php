@@ -13,8 +13,11 @@ declare(strict_types=1);
  *  - 주소의 # 뒤에 실어 보내서 서버 기록이나 다른 사이트로 새지 않게 함
  */
 
-// 블로그 주소. 다른 곳에서 돌릴 때는 BLOG_URL 환경변수로 바꿈 (여기로만 돌려보내서 '열린 리다이렉트'를 막음)
-define('BLOG_URL', rtrim(getenv('BLOG_URL') ?: 'http://localhost:8000', '/'));
+require_once __DIR__ . '/config.php';
+
+// 블로그 주소: 배포 설정(deploy.config.json)의 blog_url, 개발 모드에서는 BLOG_URL 환경변수로도 바꿈
+// (여기로만 돌려보내서 '열린 리다이렉트'를 막음)
+define('BLOG_URL', app_blog_url());
 const TICKET_TTL = 300;
 
 // 블로그 주소(@아이디)나 관리 기능과 헷갈리는 아이디는 가입 불가

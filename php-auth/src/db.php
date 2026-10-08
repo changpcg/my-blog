@@ -76,6 +76,17 @@ function db(): PDO
     if (!in_array('nickname_at', $cols, true)) {
         $pdo->exec('ALTER TABLE users ADD COLUMN nickname_at INTEGER NOT NULL DEFAULT 0');
     }
+    // 003: 가입 기록 (횟수 제한·가입 현황용, 24시간만 보관, 회원 번호와 잇지 않음)
+    $pdo->exec(
+        'CREATE TABLE IF NOT EXISTS signup_log (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            ip         TEXT    NOT NULL,
+            kind       TEXT    NOT NULL,
+            created_at INTEGER NOT NULL
+        )'
+    );
+    $pdo->exec('CREATE INDEX IF NOT EXISTS idx_signup_kind ON signup_log (kind, created_at)');
+    $pdo->exec('CREATE INDEX IF NOT EXISTS idx_signup_ip ON signup_log (ip, kind, created_at)');
     // 블로그에서 읽어 온 값 잠깐 기억 (회원가입 허용 등)
     $pdo->exec(
         'CREATE TABLE IF NOT EXISTS bridge_cache (

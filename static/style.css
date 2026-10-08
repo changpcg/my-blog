@@ -761,3 +761,13 @@ img.avatar.mini { display: inline-block; }
   .room-grid.chars { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .banner-row { flex-wrap: wrap; padding: 14px 16px 16px; }
 }
+
+/* 003: 사이트 설정의 공개 주소·가입 현황 */
+.kv { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 6px 14px; margin: 0 0 10px; font-size: 14px; }
+.kv dt { color: var(--text-2); }
+.kv dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.kv code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; background: var(--bg-soft); padding: 2px 6px; border-radius: 4px; }
+.kv code.pick { user-select: all; }
+.hint.warn { color: var(--danger); font-weight: 600; }
+.signup-stats { margin: 0 0 8px; font-size: 14px; }
+@media (max-width: 600px) { .kv { grid-template-columns: minmax(0, 1fr); gap: 2px; } .kv dd { margin-bottom: 8px; } }

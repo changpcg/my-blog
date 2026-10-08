@@ -1,0 +1,36 @@
+# my-blog 블로그 서버(Python) systemd 서비스 예시 — deploy/README.md 6단계
+#
+#   sudo cp deploy/my-blog.service.example /etc/systemd/system/my-blog.service
+#   sudo systemctl daemon-reload && sudo systemctl enable --now my-blog
+#   journalctl -u my-blog -n 20      # 시작 안내(공개 모드·콜백 주소)나 설정 오류가 여기 보임
+
+[Unit]
+Description=my-blog (Python blog server)
+After=network.target
+
+[Service]
+User=myblog
+Group=myblog
+WorkingDirectory=/srv/my-blog
+# 127.0.0.1에서만 열고 Nginx가 앞에서 받음 (공개 모드는 다른 HOST를 거절함)
+Environment=HOST=127.0.0.1
+Environment=PORT=8000
+Environment=PYTHONUNBUFFERED=1
+# 관리자 비밀번호: BLOG_PASSWORD=... 한 줄 (root 소유, 권한 600). 배포 설정 파일에는 넣지 않음
+EnvironmentFile=/etc/my-blog/blog.env
+ExecStart=/usr/bin/python3 server.py
+Restart=on-failure
+RestartSec=3
+# 설정 오류(종료 코드 78)면 다시 켜지 않음 → journalctl로 안내를 보고 고친 뒤 restart
+RestartPreventExitStatus=78
+# 새로 만드는 blog.db·uploads를 이 사용자만 읽고 쓰게
+UMask=0077
+# 보호 설정: /srv/my-blog 밖은 읽기만
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/srv/my-blog
+
+[Install]
+WantedBy=multi-user.target

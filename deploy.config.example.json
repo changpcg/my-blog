@@ -1,0 +1,7 @@
+{
+  "public_mode": true,
+  "blog_url": "https://blog.example.com",
+  "auth_url": "https://auth.example.com",
+  "trusted_proxies": ["127.0.0.1", "::1"],
+  "signup": { "per_ip_per_hour": 3, "site_per_hour": 30, "bot_check": true }
+}

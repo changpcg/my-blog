@@ -63,7 +63,8 @@ BLOG_PASSWORD=원하는비밀번호 python3 server.py
 | `blog.db` | 글·댓글 데이터 (처음 실행 시 생성) |
 | `uploads/` | 업로드한 이미지 |
 
-백업은 `blog.db`와 `uploads/` 폴더만 복사하면 됩니다.
+백업은 `blog.db`·`uploads/`·`php-auth/db/`(회원 DB·`sso.key`)·`php-auth/oauth.config.php`·`deploy.config.json`을 복사합니다.
+블로그는 회원 번호로 계정을 찾으므로 **blog.db와 회원 DB는 항상 함께** 백업·복원하세요.
 
 ## 다른 기기에서 접속하기
 
@@ -73,7 +74,20 @@ BLOG_PASSWORD=원하는비밀번호 python3 server.py
 HOST=0.0.0.0 BLOG_PASSWORD=비밀번호 python3 server.py
 ```
 
-그다음 `http://이 컴퓨터의 IP:8000`으로 접속합니다. 인터넷 전체에 공개하려면 서버 호스팅(배포)이 필요합니다.
+그다음 `http://이 컴퓨터의 IP:8000`으로 접속합니다. 인터넷 전체에 공개하려면 아래 '실행 모드'의 공개 모드를 쓰세요.
+
+## 실행 모드 (개발 / 공개)
+
+| 모드 | 켜는 법 | 특징 |
+|---|---|---|
+| 개발 모드 (기본) | 지금처럼 `python3 server.py` + `php -S` | http://localhost, 설정 파일 없어도 됨 |
+| 공개 모드 | `deploy.config.json`에 `"public_mode": true` | https 전용·Secure 쿠키·HSTS, 관리자 비밀번호 12자 이상 필수, 회원 서버는 Nginx + PHP-FPM |
+
+- 두 서버는 `deploy.config.json` 한 파일을 함께 읽습니다(예시: `deploy.config.example.json`, 실제 파일은 git에 올라가지 않음).
+- 인터넷 공개(VPS·Nginx·HTTPS) 순서는 **[deploy/README.md](deploy/README.md)** 에 있습니다.
+- 회원가입 보호(두 모드 공통): 같은 곳(IP)에서 1시간 3개·사이트 전체 1시간 30개까지, 숨은 칸·최소 3초로 자동 가입을 막습니다.
+  개발 중 가입 테스트를 자주 하면 `deploy.config.json`에 `{"signup": {"per_ip_per_hour": 50}}`처럼 한도를 올리세요.
+- 점검: `python3 tests/smoke_public_deploy.py` (코드를 임시 폴더에 복사해 공개·개발 모드를 확인, 실제 DB는 건드리지 않음)
 
 ## 회원가입·로그인 (PHP와 합침)
 

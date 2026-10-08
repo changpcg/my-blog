@@ -11,6 +11,7 @@ import json
 import os
 import re
 import secrets
+import time
 import unittest
 import urllib.error
 import urllib.parse
@@ -64,10 +65,16 @@ class MemberLifecycle(unittest.TestCase):
     def test_full_cycle(self):
         user, pw, pw2 = "smk" + secrets.token_hex(4), "smokepass1", "smokepass2"
         a = client()
-        t = csrf(a, "register.php")
+        page = req(a, PHP + "/register.php")[2]
+        t = re.search(r'name="csrf" value="([^"]+)"', page).group(1)
+        # 003 자동 가입 방지: 폼 토큰과 빈 숨은 칸을 보내고, 화면을 연 뒤 3초가 지나야 받음
+        m = re.search(r'name="form_token" value="([^"]+)"', page)
+        guard = {"form_token": m.group(1), "website": ""} if m else {}
         req(a, PHP + "/register.php", form={"csrf": t, "action": "check", "username": user})
+        time.sleep(3.1)
         s, _, _ = req(a, PHP + "/register.php", form={
-            "csrf": t, "action": "signup", "username": user, "password": pw, "password2": pw, "nickname": "스모크", "bio": ""})
+            "csrf": t, "action": "signup", "username": user, "password": pw, "password2": pw, "nickname": "스모크", "bio": "",
+            **guard})
         self.assertEqual(s, 302, "가입 (회원가입 허용이 켜져 있어야 함)")
 
         # 닉네임 수정 → 블로그 입장 때 반영

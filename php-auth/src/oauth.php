@@ -68,9 +68,17 @@ function provider(string $p): array
     return array_merge(PROVIDERS[$p], oauth_config()[$p]);
 }
 
+/**
+ * SNS 콜백 주소. 공개 모드: 회원 서버 공개 주소(auth_url) + /oauth_callback.php만 (oauth.config.php의 값은 무시).
+ * 개발 모드: oauth.config.php에 redirect_uri가 있으면 그 값(지금 등록해 둔 SNS 설정 유지).
+ */
 function redirect_uri(): string
 {
-    return oauth_config()['redirect_uri'] ?? 'http://localhost:8080/oauth_callback.php';
+    $fromConfig = oauth_config()['redirect_uri'] ?? '';
+    if (!public_mode() && is_string($fromConfig) && $fromConfig !== '') {
+        return $fromConfig;
+    }
+    return app_auth_url() . '/oauth_callback.php';
 }
 
 /** 1) SNS 로그인 화면으로 보낼 주소. $mode: 'login' 또는 'link'(이미 로그인한 회원에 연결) */

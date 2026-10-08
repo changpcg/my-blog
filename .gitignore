@@ -8,3 +8,4 @@ php-auth/db/
 php-auth/db.backup-*/
 php-auth/oauth.config.php
 __pycache__/
+deploy.config.json

@@ -43,19 +43,23 @@ php-auth/
 - **무차별 대입 방지:** 같은 아이디·IP로 15분 안에 5번 틀리면 15분 동안 로그인을 막습니다.
 - **XSS 방지:** 화면에 나가는 모든 값은 `htmlspecialchars()`로 처리합니다.
 - **CSRF 방지:** 가입·로그인·로그아웃 폼에 일회성 토큰을 넣고 확인합니다.
-- **세션 보호:** 로그인할 때 세션 번호를 새로 발급하고, 쿠키는 `HttpOnly`·`SameSite=Lax`로 설정합니다.
+- **세션 보호:** 로그인할 때 세션 번호를 새로 발급하고, 쿠키는 `HttpOnly`·`SameSite=Lax`로 설정합니다(공개 모드는 `Secure`도).
+- **가입 남용 방지:** 같은 곳(IP)에서 1시간 3개·사이트 전체 1시간 30개까지, 숨은 칸·최소 3초·1회용 폼 토큰으로 자동 가입을 막습니다(`src/signup_guard.php`).
 - **DB 파일 보호:** `db/` 폴더는 `public/` 바깥에 있어 브라우저로 내려받을 수 없습니다. 실제 서버(Apache·Nginx)에서도 문서 루트를 `public/`으로 설정하세요.
 
 ## 블로그와 연결
 
 블로그(8000)에서 `?return=blog`를 붙여 들어오면 가입·로그인 뒤 블로그로 돌려보냅니다 (`src/sso.php`).
-블로그 주소가 다르면 `BLOG_URL=http://주소 php -S localhost:8080 -t public`처럼 실행하세요.
+블로그 주소가 다르면 `BLOG_URL=http://주소 php -S localhost:8080 -t public`처럼 실행하세요(개발 모드).
+주소·실행 모드는 블로그와 함께 읽는 `../deploy.config.json`에서도 정할 수 있고, 공개 모드에서는 그 파일만 씁니다
+(`src/config.php`). 공개 모드에서는 `php -S`가 아니라 Nginx + PHP-FPM으로 실행합니다 → `../deploy/README.md`.
 `admin`, `root` 같은 아이디는 가입할 수 없습니다.
 
 ## SNS 로그인 (카카오 · 네이버 · 구글)
 
 1. `oauth.config.php`를 열어 각 SNS의 키를 넣습니다. 키를 비워 둔 SNS는 버튼이 나오지 않습니다.
 2. 각 개발자 센터에 Redirect URI(콜백 주소)를 똑같이 등록합니다: `http://localhost:8080/oauth_callback.php`
+   (공개 모드에서는 자동으로 `회원 서버 공개 주소/oauth_callback.php`가 되고, 블로그 관리자 사이트 설정에서 확인할 수 있습니다)
 
 | SNS | 등록하는 곳 | 넣을 값 |
 |---|---|---|

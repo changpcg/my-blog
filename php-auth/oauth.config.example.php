@@ -3,8 +3,9 @@
 // 키를 비워 둔 SNS는 로그인 버튼이 나오지 않습니다.
 //
 // 각 개발자 센터에 등록할 "Redirect URI(콜백 주소)"는 모두 같습니다:
-//   http://localhost:8080/oauth_callback.php
-// (실제 도메인에 올리면 https://내도메인/oauth_callback.php 로 바꾸고, redirect_uri도 함께 바꾸세요)
+//   개발 모드: http://localhost:8080/oauth_callback.php (아래 redirect_uri 값)
+//   공개 모드: deploy.config.json의 auth_url + /oauth_callback.php 가 자동으로 쓰이고, 아래 redirect_uri는 무시됩니다.
+//             (블로그 관리자 → 사이트 설정 → '공개 주소'에서 정확한 값을 볼 수 있어요)
 
 return [
     'redirect_uri' => 'http://localhost:8080/oauth_callback.php',

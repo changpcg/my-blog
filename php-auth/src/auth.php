@@ -1,9 +1,14 @@
 <?php
 declare(strict_types=1);
 
+// 003: 배포 설정을 먼저 읽고, 틀리면 DB를 열기 전에 멈춤
+require_once __DIR__ . '/config.php';
+config_guard();
+enforce_public_mode();   // 공개 모드: php -S 거절, https가 아니면 308, HSTS (세션 시작 전)
 require_once __DIR__ . '/db.php';
 require_once __DIR__ . '/sso.php';
 require_once __DIR__ . '/oauth.php';
+require_once __DIR__ . '/signup_guard.php';
 
 const USERNAME_PATTERN = '/^[a-z0-9_]{4,20}$/';
 const MAX_FAILS = 5;            // 이 횟수만큼 틀리면
@@ -14,7 +19,7 @@ const LOCK_SECONDS = 15 * 60;   // 15분 동안 로그인 잠금
 session_set_cookie_params([
     'lifetime' => 0,
     'path' => '/',
-    'secure' => !empty($_SERVER['HTTPS']),
+    'secure' => public_mode() || is_https(),   // 공개 모드면 항상 https로만
     'httponly' => true,
     'samesite' => 'Lax',
 ]);
@@ -248,10 +253,7 @@ function create_user(string $username, ?string $password, string $nickname, stri
     return (int)$pdo->lastInsertId();
 }
 
-function client_ip(): string
-{
-    return (string)($_SERVER['REMOTE_ADDR'] ?? 'unknown');
-}
+// client_ip()는 config.php (003: 믿는 프록시 뒤에서도 실제 방문자 IP)
 
 /** 최근 15분 동안 이 아이디+IP로 틀린 횟수 */
 function recent_fails(string $username): int

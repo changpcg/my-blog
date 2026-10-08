@@ -10,12 +10,14 @@ import base64
 import hashlib
 import hmac
 import html
+import ipaddress
 import json
 import os
 import re
 import secrets
 import shutil
 import sqlite3
+import sys
 import time
 import threading
 import urllib.error
@@ -25,7 +27,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime
 from http import cookies
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import parse_qs, quote, urlencode, urlparse
+from urllib.parse import parse_qs, quote, urlencode, urlparse, urlsplit
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 STATIC_DIR = os.path.join(BASE_DIR, "static")
@@ -33,9 +35,10 @@ UPLOAD_DIR = os.path.join(BASE_DIR, "uploads")
 DB_PATH = os.path.join(BASE_DIR, "blog.db")
 HOST = os.environ.get("HOST", "127.0.0.1")
 PORT = int(os.environ.get("PORT", "8000"))
-PASSWORD = os.environ.get("BLOG_PASSWORD", "admin1234")
-# 회원가입·로그인은 PHP(php-auth)가 맡음. 블로그는 PHP가 서명한 입장권을 확인해서 로그인시킴
-AUTH_URL = os.environ.get("AUTH_URL", "http://localhost:8080").rstrip("/")
+DEFAULT_PASSWORD = "admin1234"
+PASSWORD = os.environ.get("BLOG_PASSWORD", DEFAULT_PASSWORD)
+# 회원가입·로그인은 PHP(php-auth)가 맡음. 블로그는 PHP가 서명한 입장권을 확인해서 로그인시킴.
+# 블로그·회원 서버 주소(BLOG_URL·AUTH_URL)는 아래 '배포 설정'에서 정함
 SSO_KEY_PATH = os.path.join(BASE_DIR, "php-auth", "db", "sso.key")
 ADMIN_USERNAME = "admin"
 USERNAME_RE = re.compile(r"^[a-z0-9_]{4,20}$")
@@ -70,6 +73,194 @@ FILE_TYPES = {
 }
 IMAGE_MAX = 10 * 1024 * 1024
 FILE_MAX = 30 * 1024 * 1024
+
+# ---------- 배포 설정 (003): 블로그와 회원 서버가 함께 읽는 deploy.config.json ----------
+# 파일이 없으면 개발 모드(지금과 같음). 공개 모드는 이 파일의 public_mode로만 켠다.
+# 관리자 비밀번호 같은 비밀값은 이 파일에 넣지 않는다(BLOG_PASSWORD 환경변수).
+CONFIG_PATH = os.environ.get("MYBLOG_CONFIG") or os.path.join(BASE_DIR, "deploy.config.json")
+CONFIG_EXIT = 78  # 설정 오류로 켜지 않을 때의 종료 코드 (systemd가 다시 켜지 않게)
+LOOPBACK_HOSTS = ("127.0.0.1", "::1", "localhost")
+
+
+def load_config():
+    """deploy.config.json 읽기 → (내용 dict, 오류 문구 목록). 파일이 없으면 빈 설정."""
+    if not os.path.exists(CONFIG_PATH):
+        return {}, []
+    try:
+        with open(CONFIG_PATH, encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError) as e:
+        return {}, [f"배포 설정 파일(deploy.config.json)을 읽을 수 없어요: {e}. JSON 형식을 확인해 주세요."]
+    if not isinstance(data, dict):
+        return {}, ["배포 설정 파일(deploy.config.json)을 읽을 수 없어요: 맨 바깥이 { } 가 아니에요. JSON 형식을 확인해 주세요."]
+    return data, []
+
+
+def https_origin(url):
+    """'https://호스트[:포트]' 꼴(경로·쿼리·조각·사용자 정보 없음)이면 정리한 주소, 아니면 None."""
+    try:
+        u = urlsplit(str(url))
+        port = u.port
+    except ValueError:
+        return None
+    if u.scheme != "https" or not u.hostname or u.username or u.password:
+        return None
+    if u.path not in ("", "/") or u.query or u.fragment or "@" in u.netloc:
+        return None
+    host = u.hostname.lower()
+    if ":" in host:
+        host = f"[{host}]"
+    return f"https://{host}" + (f":{port}" if port else "")
+
+
+def ip_obj(text):
+    """IP 주소 문자열 → ipaddress 객체(IPv4로 표현된 IPv6는 IPv4로), 아니면 None."""
+    try:
+        a = ipaddress.ip_address(str(text).strip())
+    except ValueError:
+        return None
+    if a.version == 6 and a.ipv4_mapped:
+        a = a.ipv4_mapped
+    return a
+
+
+def build_settings(raw, env):
+    """설정 파일 내용 + 환경변수 → (설정 dict, 오류 문구 목록). 순서는 specs/003 contracts/deploy-config.md."""
+    errors = []
+
+    def bad(key, rule):
+        errors.append(f"deploy.config.json의 {key} 값이 올바르지 않아요: {rule}.")
+
+    public = raw.get("public_mode")
+    public = False if public is None else public
+    if not isinstance(public, bool):
+        bad("public_mode", "true 또는 false로 적어 주세요")
+        public = False
+
+    urls = {}
+    for key, env_name, default, example in (
+        ("blog_url", "BLOG_URL", "http://localhost:8000", "blog"),
+        ("auth_url", "AUTH_URL", "http://localhost:8080", "auth"),
+    ):
+        file_val = raw.get(key)
+        if file_val is not None and not isinstance(file_val, str):
+            bad(key, "주소를 문자열로 적어 주세요")
+            file_val = None
+        env_val = (env.get(env_name) or "").strip()
+        if public:
+            value = (file_val or "").strip().rstrip("/")
+            if not https_origin(value):
+                errors.append(
+                    f"공개 모드에서는 {key}에 https 주소만 넣어 주세요(예: https://{example}.example.com, 경로 없이)."
+                )
+            if env_val and env_val.rstrip("/") != value:
+                errors.append(
+                    f"공개 모드에서는 주소를 deploy.config.json 한 곳에만 넣어 주세요. "
+                    f"환경변수 {env_name}을 지우거나 파일과 같게 맞춰 주세요."
+                )
+        else:
+            value = (env_val or (file_val or "").strip() or default).rstrip("/")
+        urls[key] = value
+    if public:
+        b, a = https_origin(urls["blog_url"]), https_origin(urls["auth_url"])
+        if b and a and b == a:
+            errors.append("블로그와 회원 서버는 서로 다른 주소를 써야 해요(예: blog.·auth. 하위 도메인).")
+
+    tp = raw.get("trusted_proxies")
+    if tp is None:
+        tp = ["127.0.0.1", "::1"] if public else []
+    proxies = set()
+    if not isinstance(tp, list):
+        bad("trusted_proxies", 'IP 주소 목록으로 적어 주세요(예: ["127.0.0.1"])')
+    else:
+        for item in tp:
+            a = ip_obj(item) if isinstance(item, str) else None
+            if a is None:
+                bad("trusted_proxies", f"{item!r}은(는) IP 주소가 아니에요(범위 표기는 쓸 수 없어요)")
+            else:
+                proxies.add(a)
+        if public and not tp:
+            errors.append(
+                "공개 모드에서는 믿는 프록시(trusted_proxies)를 하나 이상 적어 주세요(같은 서버의 Nginx면 127.0.0.1)."
+            )
+
+    sg = raw.get("signup")
+    sg = {} if sg is None else sg
+    if not isinstance(sg, dict):
+        bad("signup", "{ } 안에 per_ip_per_hour·site_per_hour·bot_check를 적어 주세요")
+        sg = {}
+
+    def int_in(name, default, lo, hi):
+        v = sg.get(name)
+        v = default if v is None else v
+        if isinstance(v, bool) or not isinstance(v, int) or not lo <= v <= hi:
+            bad(f"signup.{name}", f"{lo}~{hi} 사이의 정수로 적어 주세요")
+            return default
+        return v
+
+    per_ip = int_in("per_ip_per_hour", 3, 1, 1000)
+    site = int_in("site_per_hour", 30, 1, 100000)
+    if site < per_ip:
+        bad("signup.site_per_hour", "per_ip_per_hour 이상이어야 해요")
+    bot = sg.get("bot_check")
+    bot = True if bot is None else bot
+    if not isinstance(bot, bool):
+        bad("signup.bot_check", "true 또는 false로 적어 주세요")
+        bot = True
+    if public and bot is False:
+        errors.append("공개 모드에서는 자동 가입 방지(signup.bot_check)를 끌 수 없어요.")
+
+    return {
+        "public_mode": public,
+        "blog_url": urls["blog_url"],
+        "auth_url": urls["auth_url"],
+        "trusted_proxies": proxies,
+        "signup": {"per_ip_per_hour": per_ip, "site_per_hour": site, "bot_check": bot},
+    }, errors
+
+
+_RAW_CONFIG, CONFIG_ERRORS = load_config()
+SETTINGS, _SETTING_ERRORS = build_settings(_RAW_CONFIG, os.environ)
+CONFIG_ERRORS = CONFIG_ERRORS + _SETTING_ERRORS
+PUBLIC_MODE = SETTINGS["public_mode"]
+BLOG_URL = SETTINGS["blog_url"]
+AUTH_URL = SETTINGS["auth_url"]
+TRUSTED_PROXIES = SETTINGS["trusted_proxies"]
+
+
+def is_trusted(ip):
+    """바로 앞 접속(ip)이 믿는 프록시인지 (정규화해서 비교)."""
+    a = ip_obj(ip)
+    return a is not None and a in TRUSTED_PROXIES
+
+
+_WARNED = set()
+
+
+def warn_once(msg):
+    """운영자용 안내를 서버 출력에 한 번만."""
+    if msg not in _WARNED:
+        _WARNED.add(msg)
+        print(msg, file=sys.stderr, flush=True)
+
+
+def check_config():
+    """켜기 전에 확인할 설정 문제 목록(한국어). 비어 있으면 켜도 됨. DB는 건드리지 않는다."""
+    problems = list(CONFIG_ERRORS)
+    if PUBLIC_MODE:
+        if HOST not in LOOPBACK_HOSTS:
+            problems.append("공개 모드에서는 블로그 서버를 127.0.0.1에만 열어요. HOST 환경변수를 지우거나 127.0.0.1로 바꿔 주세요.")
+        # 관리자 비밀번호 (US1): 기본값으로 돌아가는 일을 공개 모드에서는 허용하지 않음
+        pw = os.environ.get("BLOG_PASSWORD")
+        if not pw:
+            problems.append(
+                "공개 모드에서는 관리자 비밀번호를 정해야 해요. BLOG_PASSWORD 환경변수(예: /etc/my-blog/blog.env)에 넣어 주세요."
+            )
+        elif pw == DEFAULT_PASSWORD:
+            problems.append("기본 관리자 비밀번호(admin1234)는 공개 모드에서 쓸 수 없어요.")
+        elif len(pw) < 12 or not re.search(r"[A-Za-z]", pw) or not re.search(r"\d", pw):
+            problems.append("관리자 비밀번호는 12자 이상, 영문과 숫자를 함께 넣어 주세요.")
+    return problems
 
 
 def db():
@@ -170,6 +361,10 @@ def init_db():
         nickname = conn.execute("SELECT value FROM settings WHERE key = 'nickname'").fetchone()[0]
         if admin:
             admin_id = admin["id"]
+            # 비밀번호가 바뀌었으면(예전 해시로 확인 안 됨) 예전 관리자 로그인을 모두 끊음 (003 US1)
+            old_hash = conn.execute("SELECT password_hash FROM users WHERE id = ?", (admin_id,)).fetchone()[0]
+            if not check_pw(PASSWORD, old_hash):
+                conn.execute("DELETE FROM sessions WHERE user_id = ?", (admin_id,))
             conn.execute("UPDATE users SET password_hash = ?, role = 'admin' WHERE id = ?", (hash_pw(PASSWORD), admin_id))
         else:
             admin_id = conn.execute(
@@ -709,7 +904,52 @@ class Handler(SimpleHTTPRequestHandler):
     def end_headers(self):
         if getattr(self, "revalidate", False):
             self.send_header("Cache-Control", "no-cache")
+        if getattr(self, "https_ok", False):
+            # 공개 모드 + https: 브라우저가 다음부터 https로만 오게 (003 US2)
+            self.send_header("Strict-Transport-Security", "max-age=31536000")
         super().end_headers()
+
+    def send_header(self, keyword, value):
+        # 공개 모드에서는 모든 쿠키(session·vid·seen_*·지우기 쿠키)를 https로만 보내게 (003 US2)
+        if PUBLIC_MODE and keyword.lower() == "set-cookie" and "; secure" not in value.lower():
+            value = f"{value}; Secure"
+        super().send_header(keyword, value)
+
+    # ---------- 공개 모드 관문·실제 방문자 IP (003) ----------
+    def client_ip(self):
+        """실제 방문자 IP: 믿는 프록시에서 온 요청만 X-Forwarded-For를 오른쪽부터 읽어 믿는 프록시가 아닌 첫 IP."""
+        peer = self.client_address[0]
+        if not is_trusted(peer):
+            return peer
+        hops = [h.strip() for h in self.headers.get("X-Forwarded-For", "").split(",") if h.strip()]
+        for hop in reversed(hops):
+            a = ip_obj(hop)
+            if a is None:
+                return peer
+            if a not in TRUSTED_PROXIES:
+                return str(a)
+        return peer
+
+    def public_gate(self):
+        """공개 모드에서 https가 아니면 같은 경로의 https 공개 주소로 308. 응답을 보냈으면 True."""
+        if not PUBLIC_MODE:
+            return False
+        trusted = is_trusted(self.client_address[0])
+        proto = self.headers.get("X-Forwarded-Proto")
+        if trusted and proto is None:
+            # 설정 실수(무한 이동 대신 안내): Nginx가 X-Forwarded-Proto를 보내지 않음
+            warn_once("앞단 웹 서버가 X-Forwarded-Proto를 보내지 않아요. "
+                      "Nginx 설정에 proxy_set_header X-Forwarded-Proto $scheme; 을 넣어 주세요.")
+            self.send_json({"error": "서버 설정 오류: 앞단 웹 서버가 X-Forwarded-Proto를 보내지 않아요. Nginx 설정을 확인해 주세요."}, 500)
+            return True
+        if trusted and proto.split(",")[0].strip().lower() == "https":
+            self.https_ok = True
+            return False
+        self.send_response(308)
+        self.send_header("Location", BLOG_URL + (self.path if self.path.startswith("/") else "/"))
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+        return True
 
     # ---------- 공통 ----------
     def cookie(self, name):
@@ -774,6 +1014,8 @@ class Handler(SimpleHTTPRequestHandler):
         self.wfile.write(raw)
 
     def route(self, method):
+        if self.public_gate():
+            return
         url = urlparse(self.path)
         if not url.path.startswith("/api/"):
             if method != "GET":
@@ -807,6 +1049,13 @@ class Handler(SimpleHTTPRequestHandler):
 
     def do_DELETE(self):
         self.route("DELETE")
+
+    def do_HEAD(self):
+        # HEAD도 공개 모드 관문을 거친 뒤 화면 파일 머리글만 (SimpleHTTPRequestHandler 기본 동작)
+        if self.public_gate():
+            return
+        self.revalidate = True
+        super().do_HEAD()
 
     def serve_upload(self, path):
         name = os.path.basename(path)
@@ -931,7 +1180,7 @@ class Handler(SimpleHTTPRequestHandler):
                 auth_logout = None
         self.send_json(
             {"ok": True, "auth_url": AUTH_URL, "auth_logout": auth_logout},
-            headers={"Set-Cookie": "session=; Path=/; Max-Age=0"},
+            headers={"Set-Cookie": "session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0"},
         )
 
     def api_PUT_me(self, parts, _):
@@ -1048,6 +1297,21 @@ class Handler(SimpleHTTPRequestHandler):
                 raise ApiError(503, "회원 서버에 연결할 수 없어 탈퇴를 진행하지 않았어요. 회원 서버를 켠 뒤 다시 시도해 주세요.")
         delete_blog_account(uid)
         self.send_json({"ok": True})
+
+    # ---------- 관리자: 공개 주소·SNS 콜백·가입 현황 (003) ----------
+    def api_GET_admin(self, parts, _):
+        """사이트 설정 화면용. 회원 서버 상태는 서명된 bridge_status.php로 받음(연결 실패면 null)."""
+        if parts != ["status"]:
+            raise ApiError(404, "없는 주소입니다.")
+        self.require_admin()
+        auth = None
+        try:
+            r = auth_post("/bridge_status.php", {"t": sign_bridge({"act": "auth_status"})})
+        except ApiError:
+            r = None
+        if r and r[0] == 200 and isinstance(r[1], dict) and r[1].get("ok"):
+            auth = r[1]
+        self.send_json({"deploy": {"public_mode": PUBLIC_MODE, "blog_url": BLOG_URL, "auth_url": AUTH_URL}, "auth": auth})
 
     # ---------- 회원 서버와 주고받기 (서명된 요청만) ----------
     def api_GET_bridge(self, parts, _):
@@ -1716,7 +1980,7 @@ class Handler(SimpleHTTPRequestHandler):
             raise ApiError(400, "비밀번호는 주소에 넣을 수 없어요. 화면을 새로 고친 뒤 다시 시도해 주세요.")
         b = self.body()
         pw = str(b.get("password", "")) if isinstance(b, dict) else ""
-        ip = self.client_address[0]
+        ip = self.client_ip()  # 003: 믿는 프록시 뒤에서도 실제 방문자 IP로 잠금
         wrong = False
         with db() as conn:
             row = conn.execute(
@@ -1789,6 +2053,13 @@ class Handler(SimpleHTTPRequestHandler):
 
 
 if __name__ == "__main__":
+    # 설정부터 확인: 문제가 있으면 DB·업로드 폴더를 열기 전에 안내만 하고 끝냄 (종료 코드 78)
+    problems = check_config()
+    if problems:
+        print("서버를 켜지 않았어요. 아래 설정을 고쳐 주세요.")
+        for problem in problems:
+            print(f" - {problem}")
+        raise SystemExit(CONFIG_EXIT)
     # 포트부터 잡아 본다: 이미 켜져 있으면 데이터베이스(관리자 비밀번호 포함)를 건드리지 않고 안내만 하고 끝냄
     try:
         server = ThreadingHTTPServer((HOST, PORT), Handler)
@@ -1800,11 +2071,17 @@ if __name__ == "__main__":
         raise
     init_db()
     restore_orphan_replies()
-    print(f"블로그 실행 중 → http://localhost:{PORT}")
-    if HOST != "127.0.0.1":
-        print(f"같은 와이파이의 다른 기기에서도 접속할 수 있습니다 (주소: 이 컴퓨터의 IP:{PORT})")
-    if PASSWORD == "admin1234":
-        print("관리자 아이디: admin / 비밀번호: admin1234  (BLOG_PASSWORD 환경변수로 바꾸세요)")
+    if PUBLIC_MODE:
+        print(f"블로그 실행 중 (공개 모드) → {BLOG_URL}  (내부 {HOST}:{PORT})")
+        print(f"회원 서버: {AUTH_URL}")
+        print(f"SNS 개발자 콘솔에 등록할 콜백 주소: {AUTH_URL}/oauth_callback.php")
+    else:
+        print(f"블로그 실행 중 → http://localhost:{PORT}")
+        if HOST != "127.0.0.1":
+            print(f"같은 와이파이의 다른 기기에서도 접속할 수 있습니다 (주소: 이 컴퓨터의 IP:{PORT})")
+        if PASSWORD == DEFAULT_PASSWORD:
+            print("관리자 아이디: admin / 비밀번호: admin1234  (BLOG_PASSWORD 환경변수로 바꾸세요)")
+    sys.stdout.flush()
     try:
         server.serve_forever()
     except KeyboardInterrupt:
