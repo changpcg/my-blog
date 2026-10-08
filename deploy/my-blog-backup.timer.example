@@ -1,0 +1,13 @@
+# my-blog 매일 백업 타이머 (008) — my-blog-backup.service.example과 함께 씀
+# 매일 04:10에 실행, 서버가 꺼져 있던 날은 켜지면 바로 실행(Persistent)
+
+[Unit]
+Description=my-blog daily backup timer
+
+[Timer]
+OnCalendar=*-*-* 04:10:00
+RandomizedDelaySec=10min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

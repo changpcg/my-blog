@@ -13,6 +13,7 @@ import html
 import ipaddress
 import json
 import os
+import posixpath
 import re
 import secrets
 import shutil
@@ -27,7 +28,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime
 from http import cookies
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import parse_qs, quote, urlencode, urlparse, urlsplit
+from urllib.parse import parse_qs, quote, unquote, urlencode, urlparse, urlsplit
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 STATIC_DIR = os.path.join(BASE_DIR, "static")
@@ -379,6 +380,9 @@ def init_db():
             conn.execute("UPDATE posts SET type = 'daily' WHERE category = '공지'")
         if "author_id" not in cols:
             conn.execute("ALTER TABLE posts ADD COLUMN author_id INTEGER REFERENCES users(id)")
+        if "cover" not in cols:
+            # 005: 대표 사진 ('' 자동, 'none' 사진 없이, 본문 속 업로드 사진 주소)
+            conn.execute("ALTER TABLE posts ADD COLUMN cover TEXT NOT NULL DEFAULT ''")
         conn.execute("UPDATE posts SET author_id = ? WHERE author_id IS NULL", (admin_id,))
         if "watchlist" not in columns(conn, "users"):
             conn.execute("ALTER TABLE users ADD COLUMN watchlist TEXT")
@@ -405,6 +409,10 @@ def init_db():
         conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_auth_uid ON users (auth_uid)")
         # 미니룸: 기본 목록에서 고른 배경·캐릭터 (없으면 내 방 + 곰)
         for col, default in (("room_bg", "room"), ("room_char", "bear")):
+            if col not in ucols:
+                conn.execute(f"ALTER TABLE users ADD COLUMN {col} TEXT NOT NULL DEFAULT '{default}'")
+        # 006: 블로그 꾸미기 — 대표 색, 끈 사이드바·배너 항목(JSON 목록)
+        for col, default in (("skin", "coral"), ("hidden_widgets", "[]")):
             if col not in ucols:
                 conn.execute(f"ALTER TABLE users ADD COLUMN {col} TEXT NOT NULL DEFAULT '{default}'")
         # 002: 회원 서버 가입 시각(번호 재사용 구분)·회원 페이지에서 닉네임 바꾼 시각
@@ -577,11 +585,36 @@ MD_NOISE_RE = re.compile(r"!\[[^\[\]]*\]\([^()]*\)|[#>*_`~|\-\[\]]|\((?:http|/up
 POST_MAX_CHARS = 200_000  # 본문 최대 글자 수 (요약·대표 사진 계산이 느려지지 않게)
 
 
+def _image_text(text):
+    """사진을 찾을 본문: 코드(``` ~~~ 블록·인라인)와 HTML 주석 속 예시는 뺌"""
+    return INLINE_CODE_RE.sub(" ", COMMENT_RE.sub(" ", FENCE_RE.sub(" ", text or "")))
+
+
 def first_upload_image(text):
     """대표 사진 주소 (없으면 None)"""
-    plain = INLINE_CODE_RE.sub(" ", COMMENT_RE.sub(" ", FENCE_RE.sub(" ", text or "")))
-    m = THUMB_RE.search(plain)
+    m = THUMB_RE.search(_image_text(text))
     return m.group(1) if m else None
+
+
+def upload_images(text):
+    """005: 본문에 있는 이 블로그 업로드 사진 주소들 (나온 순서, 중복 없이) — 대표 사진 선택지·검사용"""
+    seen = []
+    for m in THUMB_RE.finditer(_image_text(text)):
+        if m.group(1) not in seen:
+            seen.append(m.group(1))
+    return seen
+
+
+COVER_RE = re.compile(r"/uploads/[0-9a-f]{32}\.(?:png|jpg|gif|webp)")
+
+
+def post_thumbnail(text, cover=""):
+    """005: 목록·관련 글 대표 사진. 고른 사진이 본문에 남아 있으면 그 사진, 'none'이면 없음, 그 밖에는 자동(첫 업로드 사진)"""
+    if cover == "none":
+        return None
+    if cover and COVER_RE.fullmatch(cover) and cover in upload_images(text):
+        return cover
+    return first_upload_image(text)
 
 
 def strip_tags_outside_code(text):
@@ -601,7 +634,7 @@ def post_dict(row, full=False):
     d["is_public"] = bool(d["is_public"])
     if not full:
         text = d.pop("content")
-        d["thumbnail"] = first_upload_image(text)
+        d["thumbnail"] = post_thumbnail(text, d.get("cover") or "")
         plain = strip_tags_outside_code(COMMENT_RE.sub(" ", FENCE_RE.sub(" ", text)))
         plain = MD_NOISE_RE.sub(" ", plain)
         d["excerpt"] = re.sub(r"\s+", " ", plain).strip()[:160]
@@ -777,19 +810,67 @@ def load_categories(raw):
 
 BLOG_FIELDS = (
     "u.id, u.username, u.nickname, u.role, u.blog_title, u.blog_desc, u.avatar, u.categories, u.auth_uid, "
-    "u.room_bg, u.room_char"
+    "u.room_bg, u.room_char, u.skin, u.hidden_widgets"
 )
 # 미니룸 기본 목록 (그림은 static/miniroom.js). 여기 없는 값은 저장하지 않음
 ROOM_BGS = ("room", "forest", "beach", "night", "cafe", "library")
 ROOM_CHARS = ("bear", "cat", "rabbit", "penguin", "dog", "robot")
 
 
+# 006 블로그 꾸미기: 대표 색 (색 값은 static/style.css) · 끌 수 있는 사이드바·배너 항목
+SKINS = ("coral", "blue", "green", "teal", "purple", "pink", "mustard", "ink")
+WIDGET_KEYS = ("room", "types", "popular", "tags", "comments", "stats")
+POPULAR_LIMIT = 5
+
+
+def load_hidden_widgets(raw):
+    """DB의 끈 항목 목록(JSON). 모르는 이름·형식 오류는 버린다."""
+    try:
+        items = json.loads(raw or "[]")
+    except ValueError:
+        return []
+    if not isinstance(items, list):
+        return []
+    out = []
+    for k in items:
+        if isinstance(k, str) and k in WIDGET_KEYS and k not in out:
+            out.append(k)
+    return out
+
+
 def blog_dict(row, public=False):
     d = dict(row)
     d["categories"] = load_categories(d.get("categories"))
+    if "skin" in d and d["skin"] not in SKINS:
+        d["skin"] = "coral"
+    if "hidden_widgets" in d:
+        d["hidden_widgets"] = load_hidden_widgets(d["hidden_widgets"])
     if public:
         d.pop("auth_uid", None)  # 다른 사람에게 보여 줄 때는 연결 정보 빼기
     return d
+
+
+def popular_posts(conn, blog_id=None):
+    """인기 글: 공개 글 중 조회수 1 이상, 조회수 많은 순(같으면 최근 글) 5개. 보는 사람과 관계없이 같다."""
+    where, args = "p.is_public = 1 AND p.views >= 1", []
+    if blog_id is not None:
+        where += " AND p.author_id = ?"
+        args.append(blog_id)
+    rows = conn.execute(
+        "SELECT p.id, p.title, p.type, p.views, p.created_at, p.content, p.cover, u.username AS author_username, "
+        f"u.blog_title FROM posts p JOIN users u ON u.id = p.author_id WHERE {where} "
+        "ORDER BY p.views DESC, p.created_at DESC, p.id DESC LIMIT ?",
+        args + [POPULAR_LIMIT],
+    ).fetchall()
+    out = []
+    for r in rows:
+        d = dict(r)
+        d["thumbnail"] = post_thumbnail(d.pop("content"), d.pop("cover") or "")
+        if blog_id is not None:  # 그 블로그 안이면 블로그 이름은 필요 없음
+            d.pop("author_username")
+            d.pop("blog_title")
+        out.append(d)
+    return out
 
 
 def sso_key():
@@ -928,14 +1009,39 @@ class ApiError(Exception):
 
 
 class Handler(SimpleHTTPRequestHandler):
+    # 007: Python 3.9의 mimetypes는 운영체제에 따라 woff2를 모를 수 있어 직접 정함
+    extensions_map = {
+        **SimpleHTTPRequestHandler.extensions_map,
+        ".woff2": "font/woff2", ".js": "text/javascript", ".css": "text/css", ".md": "text/plain; charset=utf-8",
+    }
+
     def __init__(self, *a, **kw):
         super().__init__(*a, directory=STATIC_DIR, **kw)
 
     def log_message(self, fmt, *args):
         pass
 
+    def send_response(self, code, message=None):
+        self.status_code = code
+        super().send_response(code, message)
+
+    @staticmethod
+    def is_vendor(path):
+        """내장 라이브러리·글꼴 주소인지 (파일을 찾을 때처럼 %xx·..를 풀어서 판단)"""
+        return posixpath.normpath(unquote(path)).startswith("/vendor/")
+
+    def list_directory(self, path):
+        # 화면 폴더(/vendor/ 등)의 파일 목록은 보여 주지 않음
+        self.send_error(404)
+        return None
+
     def end_headers(self):
-        if getattr(self, "revalidate", False):
+        if getattr(self, "vendor", False) and getattr(self, "status_code", 0) in (200, 304):
+            # 007: 내장 라이브러리·글꼴은 버전 이름 폴더라 내용이 바뀌지 않음 → 1년 캐시.
+            # 회원 화면(다른 주소)이 글꼴을 쓸 수 있게 다른 주소도 허용 (쿠키 없는 공개 파일)
+            self.send_header("Cache-Control", "public, max-age=31536000, immutable")
+            self.send_header("Access-Control-Allow-Origin", "*")
+        elif getattr(self, "revalidate", False):
             self.send_header("Cache-Control", "no-cache")
         if getattr(self, "https_ok", False):
             # 공개 모드 + https: 브라우저가 다음부터 https로만 오게 (003 US2)
@@ -1047,6 +1153,7 @@ class Handler(SimpleHTTPRequestHandler):
         self.wfile.write(raw)
 
     def route(self, method):
+        self.vendor = False  # 요청마다 새로 정함 (연결을 다시 쓰더라도 API 응답에 1년 캐시가 붙지 않게)
         if self.public_gate():
             return
         url = urlparse(self.path)
@@ -1056,6 +1163,7 @@ class Handler(SimpleHTTPRequestHandler):
             if url.path.startswith("/uploads/"):
                 return self.serve_upload(url.path)
             self.revalidate = True  # 화면 파일은 항상 최신 버전을 확인
+            self.vendor = self.is_vendor(url.path)  # 내장 라이브러리·글꼴 (007)
             return super().do_GET()
         q = {k: v[0] for k, v in parse_qs(url.query).items()}
         parts = [p for p in url.path[5:].split("/") if p]
@@ -1085,9 +1193,11 @@ class Handler(SimpleHTTPRequestHandler):
 
     def do_HEAD(self):
         # HEAD도 공개 모드 관문을 거친 뒤 화면 파일 머리글만 (SimpleHTTPRequestHandler 기본 동작)
+        self.vendor = False
         if self.public_gate():
             return
         self.revalidate = True
+        self.vendor = self.is_vendor(urlparse(self.path).path)
         super().do_HEAD()
 
     def serve_upload(self, path):
@@ -1244,6 +1354,16 @@ class Handler(SimpleHTTPRequestHandler):
                     conn.execute("UPDATE users SET room_bg = ? WHERE id = ?", (bg, uid))
                 if "room_char" in b:
                     conn.execute("UPDATE users SET room_char = ? WHERE id = ?", (ch, uid))
+            if "skin" in b:
+                if not isinstance(b["skin"], str) or b["skin"] not in SKINS:
+                    raise ApiError(400, "목록에 있는 색만 고를 수 있어요.")
+                conn.execute("UPDATE users SET skin = ? WHERE id = ?", (b["skin"], uid))
+            if "hidden_widgets" in b:
+                items = b["hidden_widgets"]
+                if not isinstance(items, list) or not all(isinstance(k, str) and k in WIDGET_KEYS for k in items):
+                    raise ApiError(400, "사이드바 항목을 다시 골라 주세요.")
+                items = list(dict.fromkeys(items))  # 같은 이름은 한 번만 (보낸 순서 유지)
+                conn.execute("UPDATE users SET hidden_widgets = ? WHERE id = ?", (json.dumps(items), uid))
             if "avatar" in b:
                 avatar = str(b["avatar"]).strip()
                 if avatar and not re.fullmatch(r"/uploads/[0-9a-f]{32}\.(png|jpg|gif|webp)", avatar):
@@ -1442,6 +1562,13 @@ class Handler(SimpleHTTPRequestHandler):
                 )
             ]
             blog["stats"] = self.blog_stats(conn, bid)
+            blog["popular"] = popular_posts(conn, bid)
+        # 006: 주인이 끈 사이드바 항목은 자료도 보내지 않음 (글 종류는 위쪽 종류 탭이 쓰므로 그대로)
+        hidden = blog["hidden_widgets"]
+        for key, field, empty in (("popular", "popular", []), ("tags", "tags", []), ("comments", "recent_comments", []),
+                                  ("stats", "stats", None)):
+            if key in hidden:
+                blog[field] = empty
         blog["is_owner"] = bool(self.user and self.user["id"] == bid)
         with db() as conn:
             blog["neighbor_count"] = conn.execute("SELECT COUNT(*) FROM neighbors WHERE blog_id = ?", (bid,)).fetchone()[0]
@@ -1598,6 +1725,7 @@ class Handler(SimpleHTTPRequestHandler):
                     args,
                 )
             ]
+            popular = popular_posts(conn)
             today_n = conn.execute("SELECT COUNT(*) FROM visits WHERE day = ?", (today,)).fetchone()[0]
             yest = conn.execute("SELECT COUNT(*) FROM visits WHERE day = date(?, '-1 day')", (today,)).fetchone()[0]
             total_n = conn.execute("SELECT COUNT(*) FROM visits").fetchone()[0]
@@ -1613,6 +1741,7 @@ class Handler(SimpleHTTPRequestHandler):
                 "total_posts": total_posts,
                 "tags": [{"name": n, "count": c} for n, c in tags],
                 "recent_comments": recent_comments,
+                "popular": popular,
                 "stats": {"today": today_n, "yesterday": yest, "total": total_n},
             },
             headers=set_cookie,
@@ -1839,7 +1968,7 @@ class Handler(SimpleHTTPRequestHandler):
             ).fetchone()
             # 004: 같은 블로그·종류·카테고리에서 볼 수 있는 글 최신순 4개 (사진 카드용 대표 사진 포함)
             related = conn.execute(
-                f"SELECT p.id, p.title, p.created_at, p.type, p.is_public, p.content FROM posts p "
+                f"SELECT p.id, p.title, p.created_at, p.type, p.is_public, p.content, p.cover FROM posts p "
                 f"WHERE p.category = ? AND p.id != ? AND {same} ORDER BY p.created_at DESC, p.id DESC LIMIT 4",
                 [row["category"], pid] + sargs,
             ).fetchall()
@@ -1856,7 +1985,7 @@ class Handler(SimpleHTTPRequestHandler):
         d["related"] = [
             {
                 "id": r["id"], "title": r["title"], "created_at": r["created_at"], "type": r["type"],
-                "is_public": bool(r["is_public"]), "thumbnail": first_upload_image(r["content"]),
+                "is_public": bool(r["is_public"]), "thumbnail": post_thumbnail(r["content"], r["cover"] or ""),
             }
             for r in related
         ]
@@ -1881,6 +2010,10 @@ class Handler(SimpleHTTPRequestHandler):
             raise ApiError(400, "블로그에 없는 카테고리예요. 블로그 관리에서 먼저 만들어 주세요.")
         if not cat and allowed and ptype != "daily":
             raise ApiError(400, "카테고리를 선택하세요.")
+        # 005: 대표 사진은 자동('')·사진 없이('none')·본문에 있는 업로드 사진만
+        cover = b.get("cover", "")
+        if not isinstance(cover, str) or (cover not in ("", "none") and cover not in upload_images(content)):
+            raise ApiError(400, "대표 사진은 본문에 있는 사진 중에서 골라 주세요.")
         return (
             ptype,
             title[:200],
@@ -1888,6 +2021,7 @@ class Handler(SimpleHTTPRequestHandler):
             cat,
             norm_tags(str(b.get("tags", ""))),
             1 if b.get("is_public", True) else 0,
+            cover,
         )
 
     def editable_post(self, pid):
@@ -1910,8 +2044,8 @@ class Handler(SimpleHTTPRequestHandler):
         now = now_iso()
         with db() as conn:
             cur = conn.execute(
-                "INSERT INTO posts (type, title, content, category, tags, is_public, author_id, created_at, updated_at) "
-                "VALUES (?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO posts (type, title, content, category, tags, is_public, cover, author_id, created_at, updated_at) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?)",
                 fields + (self.user["id"], now, now),
             )
         self.send_json({"id": cur.lastrowid}, 201)
@@ -1922,7 +2056,7 @@ class Handler(SimpleHTTPRequestHandler):
         fields = self.read_post_body(post["author_id"])
         with db() as conn:
             conn.execute(
-                "UPDATE posts SET type=?, title=?, content=?, category=?, tags=?, is_public=?, updated_at=? WHERE id=?",
+                "UPDATE posts SET type=?, title=?, content=?, category=?, tags=?, is_public=?, cover=?, updated_at=? WHERE id=?",
                 fields + (now_iso(), pid),
             )
         self.send_json({"id": pid})

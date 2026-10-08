@@ -1,6 +1,8 @@
 # 나의 블로그
 
 티스토리 스타일의 개인 블로그입니다. Python 3만 있으면 추가 설치 없이 실행됩니다.
+화면 라이브러리와 글꼴을 저장소 안에 넣어 두어 **인터넷이 끊겨도** 글 목록·본문·글쓰기가 그대로 동작합니다
+(날씨·시세·맛집·SNS 로그인처럼 바깥 정보를 가져오는 기능만 인터넷이 필요합니다).
 
 ## 실행
 
@@ -34,7 +36,9 @@ BLOG_PASSWORD=원하는비밀번호 python3 server.py
 
 - 가입하면 바로 내 블로그가 생겨요: 주소는 `#/@아이디`
 - 블로그마다 이름·소개·프로필 사진·카테고리·방문자 수가 따로
-- **블로그 관리** (`#/manage`): 방문 통계와 많이 본 글, 글 여러 개를 한 번에 공개/비공개/삭제, 내 글에 달린 댓글 관리, 카테고리 추가·이름 바꾸기·순서·삭제, 블로그 정보
+- **블로그 관리** (`#/manage`): 방문 통계와 많이 본 글, 글 여러 개를 한 번에 공개/비공개/삭제, 내 글에 달린 댓글 관리, 카테고리 추가·이름 바꾸기·순서·삭제, 미니룸, 꾸미기, 블로그 정보
+- **꾸미기** (블로그 관리 → 🎨 꾸미기): 대표 색 8가지(내 블로그·내 글 화면에만 적용, 방문자에게도 보임, 다크 모드는 밝은 버전), 사이드바·배너 항목(미니룸·글 종류·인기 글·태그·최근 댓글·방문자 수) 켜고 끄기
+- **인기 글**: 블로그 사이드바와 블로그 홈 사이드바에 조회수 많은 공개 글 5개
 - **블로그 홈** (`#/`): 모든 블로그의 새 글과 블로그 둘러보기
 - 관리자는 오른쪽 위 메뉴 → **사이트 설정**에서 사이트 이름, 회원가입 허용, 회원 관리
 
@@ -49,6 +53,7 @@ BLOG_PASSWORD=원하는비밀번호 python3 server.py
 **카테고리 (3가지)**: 마케팅, AI/기술, 데이터. 바꾸려면 `server.py`의 `CATEGORIES`를 고치세요.
 
 - 글쓰기/수정/삭제 (마크다운 + 실시간 미리보기, 임시 저장, 공개/비공개)
+- 글쓰기 화면: 사이드바 없이 넓게, 따라오는 도구 모음, 글자 수, **발행**을 누르면 카테고리·공개·태그·대표 사진(본문 사진 중에서)을 고르는 발행 설정 창, 저장하지 않고 나가면 확인
 - 이미지 업로드 (붙여넣기, 드래그 앤 드롭, 버튼)
 - 카테고리, 태그, 검색, 페이지 나누기
 - 댓글 (이름 + 비밀번호, 작성자 본인 또는 관리자만 삭제)
@@ -64,11 +69,27 @@ BLOG_PASSWORD=원하는비밀번호 python3 server.py
 |---|---|
 | `server.py` | API 서버 + SQLite 저장 |
 | `static/` | 화면 (HTML, CSS, JS) |
+| `static/vendor/` | 내장 라이브러리·글꼴 (marked·DOMPurify·highlight.js·Pretendard, 출처·라이선스·확인값은 그 안 README) |
 | `blog.db` | 글·댓글 데이터 (처음 실행 시 생성) |
 | `uploads/` | 업로드한 이미지 |
+| `tools/backup.py`, `tools/restore.py` | 백업·복원 도구 |
+| `backups/` | 백업 (자동·수동, git에 올라가지 않음) |
 
-백업은 `blog.db`·`uploads/`·`php-auth/db/`(회원 DB·`sso.key`)·`php-auth/oauth.config.php`·`deploy.config.json`을 복사합니다.
-블로그는 회원 번호로 계정을 찾으므로 **blog.db와 회원 DB는 항상 함께** 백업·복원하세요.
+## 백업·복원
+
+블로그는 회원 번호로 계정을 찾으므로 **blog.db와 회원 DB는 항상 함께** 백업·복원해야 합니다. 아래 도구가 둘을 함께 다룹니다.
+
+- **자동**: `start-blog.command`로 켜면 그날 백업이 없을 때 하나 만들고, 켜 둔 동안 날짜가 바뀌면 또 만듭니다. 최근 14개만 남깁니다.
+- **지금 바로**: `backup-blog.command` 더블클릭(또는 `python3 tools/backup.py`). 블로그를 켠 채로 해도 됩니다.
+- **들어가는 것**: `blog.db`, 회원 DB(`php-auth/db/sqlite.db`), 서명 키(`sso.key`), SNS 설정(`oauth.config.php`), `deploy.config.json`, `uploads/`.
+  바뀌지 않은 사진은 앞 백업과 하드 링크로 이어 용량을 거의 쓰지 않습니다. 백업 폴더는 나만 열 수 있게 만들어집니다(비밀번호 해시·키가 들어 있음).
+- **되돌리기**: 블로그와 회원 서버를 끄고(터미널에서 Ctrl + C) `python3 tools/restore.py`로 목록을 본 뒤
+  `python3 tools/restore.py backups/<폴더>`. 되돌리기 전 상태는 `…_before-restore` 폴더로 남고, 중간에 실패하면 그 상태로 자동으로 돌려놓습니다.
+  이 컴퓨터의 설정 파일(`deploy.config.json`·`oauth.config.php`)은 그대로 둡니다(백업 것으로 바꾸려면 `--with-config`).
+  백업 위치를 바꿨다면 `--dest 그 폴더`도 붙이세요.
+- **백업 위치 바꾸기**: 컴퓨터 디스크가 고장 나도 남도록 외장 디스크나 iCloud Drive 폴더를 쓰려면 `start-blog.command`·`backup-blog.command`를
+  텍스트 편집기로 열어 `cd` 줄 아래에 `export MYBLOG_BACKUP_DIR="/Volumes/외장디스크/blog-backups"`를 넣습니다(터미널에서는 `--dest 폴더`).
+- 점검: `python3 tests/smoke_backup.py` (임시 폴더에서 백업·복원을 해 보고, 실제 자료는 건드리지 않음)
 
 ## 다른 기기에서 접속하기
 
@@ -93,6 +114,7 @@ HOST=0.0.0.0 BLOG_PASSWORD=비밀번호 python3 server.py
   개발 중 가입 테스트를 자주 하면 `deploy.config.json`에 `{"signup": {"per_ip_per_hour": 50}}`처럼 한도를 올리세요.
 - 점검: `python3 tests/smoke_public_deploy.py` (코드를 임시 폴더에 복사해 공개·개발 모드를 확인, 실제 DB는 건드리지 않음)
 - 화면(004) 점검: `python3 tests/smoke_reading_ui.py` (php 없이, 대표 사진·관련 글 규칙과 본문 20만 자 상한, 실제 DB는 건드리지 않음)
+- 글쓰기(005)·꾸미기(006)·내장 파일(007) 점검: `python3 tests/smoke_editor_cover.py`, `python3 tests/smoke_blog_design.py`, `python3 tests/smoke_offline_assets.py` (모두 php 없이, 실제 DB는 건드리지 않음)
 
 ## 회원가입·로그인 (PHP와 합침)
 

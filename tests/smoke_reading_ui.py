@@ -182,7 +182,7 @@ class ReadingUi(unittest.TestCase):
             html = r.read().decode()
         with urllib.request.urlopen(self.base + "/app.js") as r:
             js = r.read().decode()
-        self.assertIn("/app.js?v=20", html, "고친 화면 파일을 새로 받도록 버전 올림")
+        self.assertRegex(html, r"/app\.js\?v=\d+", "화면 파일은 버전 표시로 새로 받게 함")
         for hook in ("postRowHtml", "buildToc", "startReadingTools", "sharePost", "openLightbox", "copyCode"):
             self.assertIn(hook, js)
 

@@ -301,7 +301,8 @@ function page_start(string $title): void
     echo '<!doctype html><html lang="ko"><head><meta charset="utf-8">'
         . '<meta name="viewport" content="width=device-width, initial-scale=1">'
         . '<title>' . h($title) . '</title>'
-        . '<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css">'
+        // 글꼴은 CDN 대신 블로그 서버의 내장 글꼴 (블로그 서버가 꺼져 있으면 기기 한글 글꼴로 보임, 007)
+        . '<link rel="stylesheet" href="' . h(BLOG_URL) . '/vendor/pretendard-1.3.9/pretendard.css">'
         . '<link rel="stylesheet" href="style.css?v=4"></head><body><main class="wrap">'
         // 어느 회원 화면에서든 블로그 첫 화면으로 돌아가는 버튼
         . '<nav class="top-nav"><a class="back-home" href="' . h(BLOG_URL) . '/#/">← 블로그 홈으로</a></nav>';

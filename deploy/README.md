@@ -183,14 +183,33 @@ for p in blog.db deploy.config.json php-auth/db/sso.key; do curl -s -o /dev/null
 
 ## 운영
 
-**백업** — 두 DB는 항상 함께(블로그는 회원 번호로 계정을 찾음):
+**백업** — 두 DB(블로그·회원)·서명 키·설정·업로드를 **함께**, 서버를 멈추지 않고 매일 자동으로(008):
 
 ```bash
+sudo install -d -o myblog -g myblog -m 700 /var/backups/my-blog
+sudo cp deploy/my-blog-backup.service.example /etc/systemd/system/my-blog-backup.service
+sudo cp deploy/my-blog-backup.timer.example   /etc/systemd/system/my-blog-backup.timer
+sudo systemctl daemon-reload && sudo systemctl enable --now my-blog-backup.timer
+sudo systemctl start my-blog-backup && journalctl -u my-blog-backup -n 5     # "백업했어요: …"
+```
+
+- 매일 04:10에 `/var/backups/my-blog/날짜_시각/`이 생기고 최근 14개만 남습니다. 큰 작업 전에는 `sudo systemctl start my-blog-backup`으로 바로 백업.
+- 디스크 고장에 대비해 이 폴더를 다른 곳(내 컴퓨터 등)으로도 복사해 두세요. 폴더는 `myblog`만 읽을 수 있고 백업끼리 하드 링크로 이어져 있으니
+  `-H`와 sudo를 함께 씁니다: `rsync -aH --rsync-path="sudo rsync" 내계정@서버:/var/backups/my-blog/ ./my-blog-backups/`
+  (백업에는 비밀번호 해시와 서명 키가 들어 있으니 안전한 곳에만).
+
+**복원** — 두 서비스를 멈추고 블로그 사용자로(root로 하면 파일 주인이 바뀌어 거절됨):
+
+```bash
+sudo -u myblog python3 /srv/my-blog/tools/restore.py --dest /var/backups/my-blog          # 목록
 sudo systemctl stop my-blog php8.3-fpm
-cd /srv/my-blog && sudo tar czf /root/my-blog-$(date +%F).tgz blog.db uploads php-auth/db deploy.config.json \
-  $( [ -f php-auth/oauth.config.php ] && echo php-auth/oauth.config.php )
+cd /srv/my-blog && sudo -u myblog python3 tools/restore.py --dest /var/backups/my-blog /var/backups/my-blog/<폴더>
 sudo systemctl start php8.3-fpm my-blog
 ```
+
+복원 직전 상태는 `…_before-restore` 폴더로 남고, 중간에 실패하면 그 상태로 자동으로 돌려놓습니다. 서버의 `deploy.config.json`·
+`oauth.config.php`는 그대로 둡니다(백업 것으로 바꾸려면 `--with-config`). 한쪽 DB만 되돌리면 회원 번호가 어긋나므로 항상 이 도구로 함께 되돌리세요.
+복원하는 동안에는 백업 타이머가 끼어들지 못하게 잠급니다.
 
 **코드 업데이트**
 

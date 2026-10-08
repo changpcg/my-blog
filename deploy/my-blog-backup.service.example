@@ -1,0 +1,25 @@
+# my-blog 매일 백업 (008) — deploy/README.md '운영 → 백업'
+# 두 DB(블로그·회원)를 서버를 멈추지 않고 함께 백업하고(SQLite 온라인 백업), 최근 14개만 남깁니다.
+#
+#   sudo install -d -o myblog -g myblog -m 700 /var/backups/my-blog
+#   sudo cp deploy/my-blog-backup.service.example /etc/systemd/system/my-blog-backup.service
+#   sudo cp deploy/my-blog-backup.timer.example   /etc/systemd/system/my-blog-backup.timer
+#   sudo systemctl daemon-reload && sudo systemctl enable --now my-blog-backup.timer
+#   sudo systemctl start my-blog-backup && journalctl -u my-blog-backup -n 5   # 한 번 바로 해 보기
+
+[Unit]
+Description=my-blog daily backup (blog.db + php-auth/db + uploads + keys + config)
+
+[Service]
+Type=oneshot
+User=myblog
+Group=myblog
+WorkingDirectory=/srv/my-blog
+ExecStart=/usr/bin/python3 tools/backup.py --dest /var/backups/my-blog --keep 14 --kind auto
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+# 회원 DB는 WAL 모드라 백업할 때도 db 폴더에 쓸 수 있어야 함(-shm)
+ReadWritePaths=/srv/my-blog /var/backups/my-blog

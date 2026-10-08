@@ -139,6 +139,34 @@ const blogHref = (username, params = {}) => {
   return `#/@${username}${[...qs].length ? '?' + qs : ''}`;
 };
 
+// ---------- 006 블로그 꾸미기 ----------
+// 대표 색 (값은 style.css의 [data-skin]) · 끌 수 있는 사이드바·배너 항목 (서버 SKINS·WIDGET_KEYS와 같음)
+const SKINS = { coral: '코랄', blue: '파랑', green: '초록', teal: '청록', purple: '보라', pink: '분홍', mustard: '겨자', ink: '먹색' };
+const WIDGETS = [
+  ['room', '미니룸', '블로그 맨 위 그림'], ['types', '글 종류', '사이드바의 종류별 글 수'], ['popular', '인기 글', '조회수 많은 공개 글 5개'],
+  ['tags', '태그', '많이 쓴 태그'], ['comments', '최근 댓글', '최근 댓글 5개'], ['stats', '방문자 수', 'Total·Today·Yesterday'],
+];
+const hasSkin = (k) => typeof k === 'string' && Object.prototype.hasOwnProperty.call(SKINS, k);
+// 블로그 화면·글 화면에만 그 블로그 색 (코랄·모르는 값이면 기본색)
+function setSkin(name) {
+  const root = document.documentElement;
+  if (hasSkin(name) && name !== 'coral') root.dataset.skin = name;
+  else delete root.dataset.skin;
+}
+const shown = (b, key) => !(b.hidden_widgets || []).includes(key);
+
+// 인기 글 목록 (블로그 홈은 블로그 이름도)
+const popularHtml = (list, withBlog) => (list && list.length ? `
+    <section class="side-box popular">
+      <h2 class="side-title">인기 글</h2>
+      <ol class="pop-list">${list.map((p, i) => `
+        <li><a href="#/post/${p.id}">
+          <span class="pop-n" aria-hidden="true">${i + 1}</span>
+          <span class="pop-t"><b>${esc(p.title)}</b><small>${withBlog ? `${esc(p.blog_title)} · ` : ''}조회 ${p.views.toLocaleString()}</small></span>
+          ${p.thumbnail ? `<img class="pop-thumb" src="${esc(p.thumbnail)}" alt="" width="48" height="48" loading="lazy" decoding="async">` : ''}
+        </a></li>`).join('')}</ol>
+    </section>` : '');
+
 // 회원가입·로그인은 PHP 회원 페이지에서. 끝나면 #/sso 로 돌아옴
 const authLink = (page) => `${blog.auth_url}/${page}.php?return=blog`;
 function goAuth(page) {
@@ -175,6 +203,11 @@ async function loadBlog() {
 
 // 로그아웃: 블로그를 로그아웃한 뒤 회원 페이지(PHP)도 거쳐서 함께 로그아웃하고 블로그 홈으로 돌아옴
 async function logout() {
+  // 쓰던 글이 있으면 먼저 묻고, 나가기로 하면 다시 묻지 않게 경고를 끔
+  if (leaveGuard) {
+    if (!leaveGuard()) return;
+    leaveGuard = null;
+  }
   const r = await api('logout', { method: 'POST' });
   if (r.auth_logout && await reachable(r.auth_url)) {
     try { sessionStorage.setItem('justLoggedOut', '1'); } catch { /* 무시 */ }
@@ -246,6 +279,7 @@ function renderPortalSidebar() {
           <a class="btn small" href="#/login">로그인</a>
         </div>`}
     </section>
+    ${popularHtml(blog.popular, true)}
     ${blog.tags.length ? `
     <section class="side-box">
       <h2 class="side-title">인기 태그</h2>
@@ -289,6 +323,7 @@ function renderBlogSidebar(b, activeCat, activeType) {
       </ul>
       ${b.is_owner ? '<a class="side-edit" href="#/manage/categories">카테고리 편집</a>' : ''}
     </section>
+    ${shown(b, 'types') ? `
     <section class="side-box">
       <h2 class="side-title">글 종류</h2>
       <ul class="cat-list">
@@ -296,28 +331,32 @@ function renderBlogSidebar(b, activeCat, activeType) {
           <li><a href="${blogHref(b.username, { type: t.key, category: activeCat })}" class="${activeType === t.key ? 'on' : ''}">
             ${TYPE_ICON[t.key]} ${esc(t.name)} <span class="count">(${t.count})</span></a></li>`).join('')}
       </ul>
-    </section>
-    ${b.tags.length ? `
+    </section>` : ''}
+    ${shown(b, 'popular') ? popularHtml(b.popular, false) : ''}
+    ${shown(b, 'tags') && b.tags && b.tags.length ? `
     <section class="side-box">
       <h2 class="side-title">태그</h2>
       <div class="tag-cloud">${b.tags.map((t) => `<a class="tag" href="${blogHref(b.username, { tag: t.name })}">#${esc(t.name)}</a>`).join('')}</div>
     </section>` : ''}
-    ${b.recent_comments.length ? `
+    ${shown(b, 'comments') && b.recent_comments && b.recent_comments.length ? `
     <section class="side-box recent-c">
       <h2 class="side-title">최근 댓글</h2>
       ${b.recent_comments.map((c) => `<a href="#/post/${c.post_id}">${esc(c.content)} <span class="count">· ${esc(c.name)}</span></a>`).join('')}
     </section>` : ''}
+    ${shown(b, 'stats') && b.stats ? `
     <section class="side-box">
       <h2 class="side-title">방문자</h2>
       ${statsHtml(b.stats)}
-    </section>`;
+    </section>` : ''}`;
 }
 
 // 블로그 위쪽 배너 (블로그 이름·주인·소개)
-const blogBanner = (b, small = false) => `
-  <header class="blog-banner card ${small ? 'small' : 'has-room'}">
-    ${small ? '' : `<div class="banner-room">${miniroomSvg(b.room_bg, b.room_char)}
-      ${b.is_owner ? '<a class="room-edit" href="#/manage/room">미니룸 꾸미기</a>' : ''}</div>`}
+const blogBanner = (b, small = false) => {
+  const room = !small && shown(b, 'room');
+  return `
+  <header class="blog-banner card ${small ? 'small' : room ? 'has-room' : ''}">
+    ${room ? `<div class="banner-room">${miniroomSvg(b.room_bg, b.room_char)}
+      ${b.is_owner ? '<a class="room-edit" href="#/manage/room">미니룸 꾸미기</a>' : ''}</div>` : ''}
     <div class="banner-row">
     <a class="banner-avatar" href="#/@${esc(b.username)}">${avatarOf(b)}</a>
     <div class="banner-text">
@@ -330,6 +369,7 @@ const blogBanner = (b, small = false) => `
     ${!b.is_owner ? `<div class="banner-actions">${neighborBtn(b)}</div>` : ''}
     </div>
   </header>`;
+};
 
 // 이웃 추가·취소 버튼 (배너가 그려진 뒤 연결)
 function bindNeighborButtons(b) {
@@ -450,12 +490,14 @@ function pagerHtml(data) {
 
 // ---------- 블로그 홈 (모든 블로그의 새 글) ----------
 async function renderPortal({ type, tag, q, page = 1 }) {
+  const seq = routeSeq;
   cur = null;
   const params = { page };
   if (tag) params.tag = tag;
   if (q) params.q = q;
   const showBlogs = !type && !tag && !q && Number(page) === 1;
   const [data, blogs] = await Promise.all([fetchPosts(params, type), showBlogs ? api('blogs?size=12') : null]);
+  if (seq !== routeSeq) return; // 그사이 다른 화면으로 이동함
   const heading = tag ? `#${esc(tag)}` : q ? `'${esc(q)}' 검색 결과` : type ? `${TYPE_ICON[type]} ${esc(typeName(type))}` : '새로 올라온 글';
   main.innerHTML = `
     ${showBlogs ? `
@@ -483,9 +525,11 @@ async function renderPortal({ type, tag, q, page = 1 }) {
 
 // ---------- 이웃 새 글 ----------
 async function renderNeighbors(page = 1) {
+  const seq = routeSeq;
   cur = null;
   if (!blog.user) { needLogin('이웃 새 글은 로그인하면 볼 수 있어요.'); return; }
   const [list, data] = await Promise.all([api('neighbors'), api(`posts?neighbors=1&page=${page}`)]);
+  if (seq !== routeSeq) return;
   main.innerHTML = `
     <div class="list-head"><h1>👥 이웃 새 글</h1><span class="count">${data.total}</span></div>
     ${list.length ? `
@@ -521,13 +565,16 @@ async function loadCur(username, visit = false) {
 }
 
 async function renderBlog(username, { type, category, tag, q, page = 1 }) {
+  const seq = routeSeq;
   const b = await loadCur(username, Number(page) === 1 && !type && !category && !tag && !q);
-  document.title = b.blog_title;
   const params = { page, blog: b.username };
   if (category) params.category = category; // '-'는 미분류
   if (tag) params.tag = tag;
   if (q) params.q = q;
   const data = await fetchPosts(params, type);
+  if (seq !== routeSeq) return; // 그사이 다른 화면으로 이동함 (늦게 온 블로그는 그리지도, 색을 입히지도 않음)
+  document.title = b.blog_title;
+  setSkin(b.skin);
   const heading = tag ? `#${esc(tag)}` : q ? `'${esc(q)}' 검색 결과`
     : category ? esc(catName(category === '-' ? '' : category)) : '전체 글';
   const empty = `<div class="empty">아직 글이 없어요.${b.is_owner ? ` <a class="link" href="#/write${type ? '?type=' + type : ''}">첫 글 쓰기 →</a>` : ''}</div>`;
@@ -556,6 +603,7 @@ async function renderPost(id) {
   const p = await api('posts/' + id);
   const b = await loadCur(p.author_username);
   if (seq !== routeSeq) return; // 그사이 다른 화면으로 이동함
+  setSkin(b.skin);
   document.title = `${p.title} - ${b.blog_title}`;
   const isFaq = p.type === 'faq';
   main.innerHTML = `
@@ -829,6 +877,7 @@ document.addEventListener('error', (e) => {
   const img = e.target;
   if (!(img instanceof HTMLImageElement)) return;
   if (img.classList.contains('post-thumb')) { img.closest('.post-row')?.classList.remove('has-thumb'); img.remove(); }
+  else if (img.classList.contains('pop-thumb')) img.remove();
   else if (img.parentElement && img.parentElement.classList.contains('rel-thumb')) {
     const icon = document.createElement('span');
     icon.setAttribute('aria-hidden', 'true');
@@ -923,32 +972,51 @@ const EDITOR_HINTS = {
   daily: { title: '제목을 입력하세요', content: '오늘 있었던 일을 자유롭게 기록하세요.' },
 };
 
+// 005: 본문에 있는 이 블로그 업로드 사진 (서버의 upload_images와 같은 규칙: 코드·주석 속 예시는 빼고, 나온 순서·중복 없이)
+function uploadImagesIn(md) {
+  const text = String(md || '')
+    .replace(/^[ \t]{0,3}(`{3,}|~{3,})[\s\S]*?(?:^[ \t]{0,3}\1|(?![\s\S]))/gm, ' ')
+    .replace(/<!--[\s\S]*?(?:-->|$)/g, ' ')
+    .replace(/``(?:[^`\n]|`(?!`))*?``|`[^`\n]*`/g, ' ');
+  const re = /(?:!\[[^[\]\n]*\]\(\s*<?|<[iI][mM][gG]\b[^<>]*?\s[sS][rR][cC]\s*=\s*["']?)(\/uploads\/[0-9a-f]{32}\.(?:png|jpg|gif|webp))(?=[\s)>"'])/g;
+  const found = [];
+  for (const m of text.matchAll(re)) if (!found.includes(m[1])) found.push(m[1]);
+  return found;
+}
+
+// 글 목록 요약 미리보기 (서버 요약과 비슷하게: 코드 블록 빼고 160자)
+function excerptOf(previewEl) {
+  const box = previewEl.cloneNode(true);
+  box.querySelectorAll('.code-block, pre, .code-head').forEach((x) => x.remove());
+  return box.textContent.replace(/\s+/g, ' ').trim().slice(0, 160);
+}
+
+// 작성 중인 화면을 떠날 때 확인 (005): 편집 화면이 정해 둠, () => true면 떠나도 됨
+let leaveGuard = null;
+
 async function renderEditor(id, defaultType) {
+  const seq = routeSeq;
   if (!blog.user) { needLogin('글을 쓰려면 로그인하세요.'); return; }
   const p = id ? await api('posts/' + id)
-    : { type: EDITOR_HINTS[defaultType] ? defaultType : 'insight', title: '', content: '', category: '', tags: [], is_public: true };
+    : { type: EDITOR_HINTS[defaultType] ? defaultType : 'insight', title: '', content: '', category: '', tags: [], is_public: true, cover: '' };
   if (id && !p.can_edit) { main.innerHTML = '<div class="empty">내가 쓴 글만 고칠 수 있어요.</div>'; return; }
   // 카테고리는 글쓴이 블로그의 카테고리 (관리자가 남의 글을 고칠 때는 그 사람 블로그 기준)
   const owner = id && p.author_username !== blog.user.username ? await api('blogs/' + enc(p.author_username)) : blog.user;
+  // 불러오는 사이 다른 화면으로 갔으면 편집 화면·나가기 경고를 그 화면에 남기지 않음
+  if (seq !== routeSeq) return;
   const cats = owner.categories;
+  document.body.classList.add('editor-mode');
+  // 발행 설정 창에서 정하는 값 (창에서 고르면 바로 기억해 취소·Esc 뒤 다시 열어도 남음, 서버로는 창의 발행/저장 버튼으로만)
+  const pub = { category: p.category || '', tags: (p.tags || []).join(', '), is_public: p.is_public !== false, cover: p.cover || '' };
   main.innerHTML = `
-    <form class="editor" id="editor">
+    <form class="editor" id="editor" novalidate>
       <div class="editor-blog">📝 <b>${esc(owner.blog_title)}</b>에 ${id ? '쓴 글 고치기' : '새 글 쓰기'}</div>
       <div class="type-pick" role="radiogroup" aria-label="글 종류">
         ${blog.types.map((t) => `
           <label class="type-opt"><input type="radio" name="type" value="${t.key}" ${p.type === t.key ? 'checked' : ''}>
             <span>${TYPE_ICON[t.key]} ${esc(t.name)}</span></label>`).join('')}
       </div>
-      <input class="title-input" name="title" placeholder="${esc(EDITOR_HINTS[p.type].title)}" value="${esc(p.title)}" required>
-      <div class="opts">
-        <div class="field" style="margin:0"><select name="category" aria-label="카테고리">
-          <option value="">카테고리 선택</option>
-          ${cats.map((c) => `<option value="${esc(c)}" ${p.category === c ? 'selected' : ''}>${esc(c)}</option>`).join('')}
-        </select>
-        ${!cats.length ? '<small class="hint">카테고리가 없어요. <a class="link" href="#/manage/categories">만들기</a></small>' : ''}</div>
-        <div class="field" style="margin:0"><input name="tags" placeholder="태그 (쉼표로 구분)" value="${esc(p.tags.join(', '))}"></div>
-        <label class="switch"><input type="checkbox" name="is_public" ${p.is_public ? 'checked' : ''}> 공개</label>
-      </div>
+      <input class="title-input" name="title" placeholder="${esc(EDITOR_HINTS[p.type].title)}" value="${esc(p.title)}" aria-label="제목" maxlength="200">
       <div>
         <div class="toolbar" id="toolbar">
           <button type="button" data-md="## |" title="제목">H2</button>
@@ -975,68 +1043,124 @@ async function renderEditor(id, defaultType) {
           </div>
         </div>
         <div class="edit-area" id="editArea">
-          <textarea name="content" id="mdInput" placeholder="${esc(EDITOR_HINTS[p.type].content)}">${esc(p.content)}</textarea>
+          <textarea name="content" id="mdInput" aria-label="본문" placeholder="${esc(EDITOR_HINTS[p.type].content)}">${esc(p.content)}</textarea>
           <div class="preview content" id="preview"></div>
         </div>
       </div>
       <div class="editor-foot">
+        <span class="char-count" id="charCount" aria-live="off"></span>
         <span class="hint" id="saveHint">${id ? '' : '작성 중인 글은 이 브라우저에 자동 저장됩니다.'}</span>
-        <div style="display:flex; gap:8px">
+        <div class="editor-actions">
           <a class="btn" href="${id ? '#/post/' + id : '#/@' + esc(blog.user.username)}">취소</a>
-          <button class="btn primary" id="publishBtn">${id ? '수정 완료' : '발행'}</button>
+          <button class="btn primary" id="publishBtn">${id ? '저장' : '발행'}</button>
         </div>
       </div>
-    </form>`;
+    </form>
+    <dialog class="publish-dlg" id="publishDlg" aria-labelledby="pubTitle">
+      <form method="dialog" class="publish-form" id="publishForm" novalidate>
+        <div class="pub-head"><h2 id="pubTitle">발행 설정</h2>
+          <button type="button" class="pub-close" value="cancel" aria-label="닫기" data-close>✕</button></div>
+        <div class="pub-body">
+          <div class="pub-fields">
+            <label class="field"><span>카테고리</span><select name="category" id="pubCategory">
+              <option value="">카테고리 선택</option>
+              ${cats.map((c) => `<option value="${esc(c)}">${esc(c)}</option>`).join('')}
+            </select>
+            ${!cats.length ? '<small class="hint">카테고리가 없어요. <a class="link" href="#/manage/categories">만들기</a></small>' : ''}</label>
+            <fieldset class="field pub-vis"><legend>공개 설정</legend>
+              <div class="pub-row">
+                <label class="pub-radio"><input type="radio" name="vis" value="public"> <b>공개</b> <small>누구나 볼 수 있어요</small></label>
+                <label class="pub-radio"><input type="radio" name="vis" value="private"> <b>비공개</b> <small>나와 관리자만 봐요</small></label>
+              </div>
+            </fieldset>
+            <label class="field"><span>태그</span><input name="tags" id="pubTags" placeholder="쉼표로 구분 (예: 마케팅, 리텐션)" autocomplete="off"></label>
+            <fieldset class="field pub-cover"><legend>대표 사진 <small>목록·관련 글에 보여요</small></legend>
+              <div class="cover-grid" id="coverGrid"></div>
+            </fieldset>
+          </div>
+          <div class="pub-preview" aria-label="목록 미리보기">
+            <span class="side-title">목록에서 이렇게 보여요</span>
+            <div class="post-list" id="pubPreview"></div>
+          </div>
+        </div>
+        <p class="pub-error error-text" id="pubError" role="alert" hidden></p>
+        <div class="pub-actions">
+          <button type="button" class="btn" data-close>취소</button>
+          <button type="submit" class="btn primary" id="pubSubmit" value="ok">${id ? '저장' : '발행'}</button>
+        </div>
+      </form>
+    </dialog>`;
 
   const form = $('#editor');
   const ta = $('#mdInput');
   const preview = $('#preview');
   const area = $('#editArea');
+  const dlg = $('#publishDlg');
+  const pform = $('#publishForm');
   const draftKey = 'draft-' + blog.user.username;
 
   if (!id) {
     try {
       const d = JSON.parse(localStorage.getItem(draftKey) || 'null');
       if (d && (d.title || d.content) && confirm('작성 중이던 글이 있어요. 불러올까요?')) {
-        if (d.type) form.elements.type.value = d.type;
-        form.title.value = d.title; ta.value = d.content; form.category.value = d.category; form.tags.value = d.tags;
+        if (d.type && EDITOR_HINTS[d.type]) form.elements.type.value = d.type;
+        form.title.value = d.title || ''; ta.value = d.content || '';
+        if (typeof d.category === 'string') pub.category = d.category;
+        if (typeof d.tags === 'string') pub.tags = d.tags;
+        if (typeof d.is_public === 'boolean') pub.is_public = d.is_public;
+        if (typeof d.cover === 'string') pub.cover = d.cover;
       }
     } catch { /* 저장소를 쓸 수 없으면 무시 */ }
   }
 
-  const update = () => (preview.innerHTML = renderMd(ta.value));
+  // 지금 편집 상태 (바뀌었는지 비교용)
+  const snapshot = () => JSON.stringify([form.elements.type.value, form.title.value, ta.value, pub.category, pub.tags, pub.is_public, pub.cover]);
+  let initial = snapshot();
+  let done = false;
+  leaveGuard = (silent) => {
+    if (done || snapshot() === initial) return true;
+    if (silent) return false;
+    return confirm(id ? '고친 내용이 아직 저장되지 않았어요. 이 화면을 나갈까요?'
+      : '작성 중인 내용이 있어요. 이 화면을 나갈까요? (자동 저장된 내용은 다음에 불러올 수 있어요)');
+  };
+
+  const countChars = () => {
+    const all = ta.value.length;
+    const noSpace = ta.value.replace(/\s/g, '').length;
+    $('#charCount').textContent = `글자 ${all.toLocaleString()} · 공백 제외 ${noSpace.toLocaleString()}`;
+  };
+  const update = () => { preview.innerHTML = renderMd(ta.value); countChars(); };
   let saveTimer;
   const saveDraft = () => {
     if (id) return;
     clearTimeout(saveTimer);
     saveTimer = setTimeout(() => {
+      if (done) return; // 발행·저장을 마친 뒤에는 다시 쓰지 않음
       try {
-        localStorage.setItem(draftKey, JSON.stringify({ type: form.elements.type.value, title: form.title.value, content: ta.value, category: form.category.value, tags: form.tags.value }));
+        localStorage.setItem(draftKey, JSON.stringify({ type: form.elements.type.value, title: form.title.value, content: ta.value,
+          category: pub.category, tags: pub.tags, is_public: pub.is_public, cover: pub.cover }));
         $('#saveHint').textContent = `임시 저장됨 ${fmtDate(new Date().toISOString(), true).slice(-5)}`;
       } catch { /* 무시 */ }
     }, 600);
   };
-  // 글 종류에 맞춰 안내 문구와 카테고리 선택지 바꾸기 (일상은 카테고리 없이도 가능)
+  // 글 종류에 맞춰 안내 문구 바꾸기 (일상은 카테고리 없이도 가능)
+  const categoryOptional = () => form.elements.type.value === 'daily' || !cats.length;
   const syncType = () => {
     const t = form.elements.type.value;
     form.title.placeholder = EDITOR_HINTS[t].title;
     ta.placeholder = EDITOR_HINTS[t].content;
-    const optional = t === 'daily' || !cats.length;
-    form.category.options[0].textContent = optional ? '카테고리 없음' : '카테고리 선택';
-    form.category.required = !optional;
   };
   form.querySelectorAll('input[name="type"]').forEach((r) => r.addEventListener('change', () => { syncType(); saveDraft(); }));
-  form.category.addEventListener('change', saveDraft);
   syncType();
   ta.addEventListener('input', () => { update(); saveDraft(); });
   form.title.addEventListener('input', saveDraft);
   update();
 
   function insert(before, after = '') {
-    const { selectionStart: s, selectionEnd: e, value } = ta;
-    const sel = value.slice(s, e);
-    ta.setRangeText(before + sel + after, s, e, 'end');
-    if (!sel) ta.selectionStart = ta.selectionEnd = s + before.length;
+    const { selectionStart: st, selectionEnd: e, value } = ta;
+    const sel = value.slice(st, e);
+    ta.setRangeText(before + sel + after, st, e, 'end');
+    if (!sel) ta.selectionStart = ta.selectionEnd = st + before.length;
     ta.focus();
     update(); saveDraft();
   }
@@ -1093,24 +1217,87 @@ async function renderEditor(id, defaultType) {
     if ((e.metaKey || e.ctrlKey) && e.key === 'i') { e.preventDefault(); insert('*', '*'); }
   });
 
-  form.onsubmit = async (e) => {
+  // ---------- 발행 설정 창 ----------
+  const pubError = (msg) => { const el = $('#pubError'); el.textContent = msg || ''; el.hidden = !msg; };
+  const coverChoices = () => uploadImagesIn(ta.value);
+  const drawCovers = () => {
+    const imgs = coverChoices();
+    if (pub.cover && pub.cover !== 'none' && !imgs.includes(pub.cover)) pub.cover = ''; // 본문에서 지운 사진이면 자동으로
+    const opt = (value, inner, label) => `
+      <label class="cover-opt" title="${esc(label)}"><input type="radio" name="cover" value="${esc(value)}" ${pub.cover === value ? 'checked' : ''} aria-label="${esc(label)}">
+        <span class="cover-face">${inner}</span></label>`;
+    $('#coverGrid').innerHTML = opt('', '<b>자동</b><small>본문 첫 사진</small>', '자동: 본문 첫 사진')
+      + opt('none', '<b>사진 없이</b><small>글자만</small>', '사진 없이')
+      + imgs.map((src, i) => opt(src, `<img src="${esc(src)}" alt="" loading="lazy">`, `본문 ${i + 1}번째 사진`)).join('')
+      + (imgs.length ? '' : '<p class="hint cover-none">본문에 올린 사진이 없어요. 사진을 넣으면 여기서 고를 수 있어요.</p>');
+  };
+  const drawPreview = () => {
+    const imgs = coverChoices();
+    const thumb = pub.cover === 'none' ? null : (pub.cover && imgs.includes(pub.cover) ? pub.cover : imgs[0] || null);
+    const t = form.elements.type.value;
+    $('#pubPreview').innerHTML = postRowHtml({
+      id: id || 0, type: t, category: pub.category, title: form.title.value.trim() || '(제목)', excerpt: excerptOf(preview),
+      is_public: pub.is_public, thumbnail: thumb, author_avatar: owner.avatar, author_nickname: owner.nickname,
+      author_blog_title: owner.blog_title, created_at: p.created_at || new Date().toISOString(), comment_count: p.comment_count || 0,
+      views: p.views || 0, like_count: p.like_count || 0,
+    }, false);
+    $('#pubPreview').querySelector('a.post-row')?.removeAttribute('href');
+  };
+  const readDialog = () => {
+    pub.category = pform.category.value;
+    pub.tags = pform.tags.value;
+    pub.is_public = pform.elements.vis.value !== 'private';
+    pub.cover = pform.elements.cover ? (pform.elements.cover.value || '') : '';
+  };
+  const openDialog = () => {
+    if (!form.title.value.trim()) { toast('제목을 입력하세요.'); form.title.focus(); return; }
+    pubError('');
+    pform.category.value = cats.includes(pub.category) ? pub.category : '';
+    pform.category.options[0].textContent = categoryOptional() ? '카테고리 없음' : '카테고리 선택';
+    pform.tags.value = pub.tags;
+    pform.elements.vis.value = pub.is_public ? 'public' : 'private';
+    drawCovers();
+    drawPreview();
+    dlg.showModal();
+    (pform.category.value || categoryOptional() ? pform.querySelector('#pubSubmit') : pform.category).focus();
+  };
+  pform.addEventListener('change', () => { readDialog(); if (dlg.open) { drawPreview(); saveDraft(); } });
+  pform.addEventListener('input', (e) => { if (e.target === pform.tags) { readDialog(); saveDraft(); } });
+  // 태그 칸의 Enter는 발행이 아니라 다음 태그로 (쉼표 넣기)
+  pform.tags.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' || e.isComposing) return;
     e.preventDefault();
+    if (pform.tags.value.trim() && !/,\s*$/.test(pform.tags.value)) pform.tags.value += ', ';
+  });
+  dlg.addEventListener('click', (e) => { if (e.target === dlg || e.target.closest('[data-close]')) dlg.close(); });
+
+  form.onsubmit = (e) => { e.preventDefault(); openDialog(); };
+  pform.onsubmit = async (e) => {
+    e.preventDefault();
+    readDialog();
+    if (!pub.category && !categoryOptional()) { pubError('카테고리를 선택하세요.'); pform.category.focus(); return; }
     const body = {
-      type: form.elements.type.value, title: form.title.value, content: ta.value, category: form.category.value,
-      tags: form.tags.value, is_public: form.is_public.checked,
+      type: form.elements.type.value, title: form.title.value, content: ta.value, category: pub.category,
+      tags: pub.tags, is_public: pub.is_public, cover: pub.cover,
     };
-    $('#publishBtn').disabled = true;
+    const btn = $('#pubSubmit');
+    btn.disabled = true;
     try {
       const r = await api(id ? 'posts/' + id : 'posts', { method: id ? 'PUT' : 'POST', body });
+      done = true;
+      clearTimeout(saveTimer); // 창에서 고른 값의 임시 저장 예약이 발행한 글을 다시 남기지 않게
       if (!id) try { localStorage.removeItem(draftKey); } catch { /* 무시 */ }
-      toast(id ? '수정했습니다.' : '발행했습니다! 🎉');
+      dlg.close();
+      toast(id ? '저장했습니다.' : '발행했습니다! 🎉');
       cur = null;
       location.hash = '#/post/' + r.id;
     } catch (err) {
-      toast(err.message);
-      $('#publishBtn').disabled = false;
+      pubError(err.message);
+      if (!dlg.open) toast(err.message); // 기다리는 사이 창을 닫았으면 창 밖에서도 알림
+      btn.disabled = false;
     }
   };
+  initial = snapshot(); // 불러온 임시 저장까지 반영한 뒤를 기준으로
   form.title.focus();
 }
 
@@ -1123,10 +1310,12 @@ async function uploadFile(file) {
 
 // ---------- 블로그 관리 ----------
 const MANAGE_TABS = [
-  ['', '📊 홈'], ['posts', '📝 글'], ['comments', '💬 댓글'], ['categories', '🗂 카테고리'], ['room', '🏠 미니룸'], ['info', '🏷 블로그 정보'],
+  ['', '📊 홈'], ['posts', '📝 글'], ['comments', '💬 댓글'], ['categories', '🗂 카테고리'], ['room', '🏠 미니룸'], ['design', '🎨 꾸미기'],
+  ['info', '🏷 블로그 정보'],
 ];
 
 async function renderManage(tab, qs) {
+  const seq = routeSeq;
   if (!blog.user) { needLogin('블로그를 관리하려면 로그인하세요.'); return; }
   cur = null;
   const u = blog.user;
@@ -1140,11 +1329,17 @@ async function renderManage(tab, qs) {
       `<a class="chip ${tab === k ? 'on' : ''}" href="#/manage${k ? '/' + k : ''}">${label}</a>`).join('')}</nav>
     <div id="manageBody"><div class="empty">불러오는 중…</div></div>`;
   const body = $('#manageBody');
-  const fn = { '': manageHome, posts: managePosts, comments: manageComments, categories: manageCategories, room: manageRoom, info: manageInfo }[tab];
+  const fn = {
+    '': manageHome, posts: managePosts, comments: manageComments, categories: manageCategories, room: manageRoom, design: manageDesign,
+    info: manageInfo,
+  }[tab];
   if (!fn) { body.innerHTML = '<div class="empty">없는 메뉴예요.</div>'; return; }
   await fn(body, qs);
+  if (seq !== routeSeq) return;
   // 사이드바: 내 블로그
-  renderBlogSidebar(await api('blogs/' + enc(u.username)), null, null);
+  const mine = await api('blogs/' + enc(u.username));
+  if (seq !== routeSeq) return;
+  renderBlogSidebar(mine, null, null);
 }
 
 async function manageHome(body) {
@@ -1337,6 +1532,68 @@ async function manageRoom(body) {
     };
   };
   draw();
+}
+
+// 꾸미기: 대표 색(미리보기 카드 안에만 바로 적용) + 사이드바·배너 항목 켜고 끄기
+async function manageDesign(body) {
+  const u = blog.user;
+  const saved = { skin: hasSkin(u.skin) ? u.skin : 'coral', hidden: (u.hidden_widgets || []).filter((k) => WIDGETS.some(([w]) => w === k)) };
+  const pick = { skin: saved.skin, hidden: [...saved.hidden] };
+  const changed = () => pick.skin !== saved.skin
+    || pick.hidden.length !== saved.hidden.length || pick.hidden.some((k) => !saved.hidden.includes(k));
+  body.innerHTML = `
+    <p class="intro">내 블로그 화면과 내 글 화면에 쓰는 색, 사이드바·배너에 보일 항목을 골라요. 방문자에게도 이렇게 보여요.</p>
+    <form id="designForm">
+      <section class="card form-card">
+        <h2 class="side-title" id="skinTitle">대표 색</h2>
+        <div class="skin-grid" role="radiogroup" aria-labelledby="skinTitle">
+          ${Object.entries(SKINS).map(([k, name]) => `
+            <label class="skin-opt" data-skin="${k}"><input type="radio" name="skin" value="${k}" ${pick.skin === k ? 'checked' : ''}>
+              <span class="skin-face"><i class="skin-dot" aria-hidden="true"></i>${esc(name)}${k === 'coral' ? ' <small>기본</small>' : ''}</span></label>`).join('')}
+        </div>
+        <div class="skin-preview" id="skinPreview" data-skin="${pick.skin}" aria-label="미리보기">
+          <div class="sp-head"><b>${esc(u.blog_title)}</b><span class="btn small primary" aria-hidden="true">글쓰기</span></div>
+          <div class="sp-chips" aria-hidden="true"><span class="chip on">전체</span><span class="chip">💡 인사이트</span><span class="chip">☕️ 일상</span></div>
+          <p class="sp-text">본문 속 <span class="sp-link">링크</span>와 <span class="tag on">#태그</span>, 선택된 메뉴가 이 색으로 보여요.</p>
+        </div>
+      </section>
+      <section class="card form-card">
+        <h2 class="side-title">사이드바·배너 항목</h2>
+        <p class="hint">끄면 방문자에게 보이지 않고, 인기 글·태그·최근 댓글·방문자 수는 자료도 보내지 않아요. 프로필과 카테고리는 항상 보여요.</p>
+        <div class="widget-list">
+          ${WIDGETS.map(([k, name, desc]) => `
+            <label class="switch field"><input type="checkbox" name="w" value="${k}" ${pick.hidden.includes(k) ? '' : 'checked'}>
+              <span>${esc(name)} <small>${esc(desc)}</small></span></label>`).join('')}
+        </div>
+      </section>
+      <div class="design-actions">
+        <a class="link" href="#/@${esc(u.username)}">내 블로그에서 보기 →</a>
+        <button class="btn primary" id="saveDesign" disabled>저장됨</button>
+      </div>
+    </form>`;
+  const form = $('#designForm');
+  const btn = $('#saveDesign');
+  const sync = () => {
+    pick.skin = form.elements.skin.value || 'coral';
+    pick.hidden = WIDGETS.map(([k]) => k).filter((k) => !form.querySelector(`input[name="w"][value="${k}"]`).checked);
+    $('#skinPreview').dataset.skin = pick.skin;
+    const c = changed();
+    btn.disabled = !c;
+    btn.textContent = c ? '저장' : '저장됨';
+  };
+  form.addEventListener('change', sync);
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    if (!changed()) return;
+    btn.disabled = true;
+    try {
+      await api('me', { method: 'PUT', body: { skin: pick.skin, hidden_widgets: pick.hidden } });
+      await loadBlog();
+      cur = null;
+      toast('꾸미기를 저장했어요.');
+      renderManage('design', new URLSearchParams());
+    } catch (err) { toast(err.message); btn.disabled = false; }
+  };
 }
 
 async function manageInfo(body) {
@@ -1532,10 +1789,12 @@ function signupBox(st) {
 }
 
 async function renderSettings() {
+  const seq = routeSeq;
   if (!blog.is_admin) { location.hash = blog.user ? '#/' : '#/login'; return; }
   const users = await api('users');
   // 회원 서버가 꺼져 있어도 나머지 설정 화면은 그대로 보이게
   const status = await api('admin/status').catch(() => null);
+  if (seq !== routeSeq) return;
   main.innerHTML = `
     <div class="panel wide">
     <form id="setForm" class="card form-card">
@@ -1606,6 +1865,9 @@ async function renderSettings() {
 let routeSeq = 0; // 화면을 바꿀 때마다 1씩 (늦게 도착한 응답이 새 화면을 덮지 않게)
 async function render() {
   routeSeq += 1;
+  const seq = routeSeq;
+  leaveGuard = null;
+  document.body.classList.remove('editor-mode');
   const [path, query] = (location.hash.slice(1) || '/').split('?');
   const qs = new URLSearchParams(query);
   const page = qs.get('page') || 1;
@@ -1616,6 +1878,8 @@ async function render() {
   renderTypeNav(null);
   // 블로그 안에서는 그 블로그만 검색
   const inBlog = parts[0] && parts[0].startsWith('@');
+  // 블로그 화면·글 화면이 아니면 그리기 전에 기본색으로 (블로그·글 화면은 응답을 받은 뒤 그 블로그 색으로)
+  if (!inBlog && parts[0] !== 'post') setSkin('');
   $('#searchInput').placeholder = inBlog ? '이 블로그 검색' : '검색';
   try {
     if (inBlog) {
@@ -1635,19 +1899,21 @@ async function render() {
         case 'edit': await renderEditor(parts[1]); break;
         case 'manage': await renderManage(parts[1] || '', qs); break;
         case 'login': renderLogin(); renderPortalSidebar(); break;
-        case 'food': cur = null; await renderFood(qs.get('q')); renderPortalSidebar(); break;
+        case 'food': cur = null; await renderFood(qs.get('q')); if (seq === routeSeq) renderPortalSidebar(); break;
         case 'neighbors': await renderNeighbors(page); break;
         case 'signup': renderSignup(); break;
-        case 'sso': await renderSso(qs.get('t')); renderPortalSidebar(); break;
+        case 'sso': await renderSso(qs.get('t')); if (seq === routeSeq) renderPortalSidebar(); break;
         case 'me': await renderMe(); break;
         case 'settings': await renderSettings(); break;
         default: main.innerHTML = '<div class="empty">페이지를 찾을 수 없습니다.</div>';
       }
     }
   } catch (err) {
+    if (seq !== routeSeq) return; // 늦게 실패한 이전 화면이 새 화면을 덮지 않게
+    setSkin(''); // 없는 블로그·글이면 기본색
     main.innerHTML = `<div class="empty">${esc(err.message)}</div>`;
   }
-  window.scrollTo(0, 0);
+  if (seq === routeSeq) window.scrollTo(0, 0);
 }
 
 $('#searchForm').onsubmit = (e) => {
@@ -1681,7 +1947,18 @@ $('#themeBtn').onclick = () => {
 };
 drawThemeBtn();
 
-window.addEventListener('hashchange', render);
+// 화면 이동: 작성 중인 화면이면 먼저 묻고, 취소하면 주소만 되돌림 (다시 그리지 않음)
+let lastHash = location.hash;
+let revertingHash = false;
+window.addEventListener('hashchange', () => {
+  if (revertingHash) { revertingHash = false; return; }
+  if (leaveGuard && !leaveGuard()) { revertingHash = true; location.hash = lastHash; return; }
+  lastHash = location.hash;
+  render();
+});
+window.addEventListener('beforeunload', (e) => {
+  if (leaveGuard && !leaveGuard(true)) { e.preventDefault(); e.returnValue = ''; }
+});
 loadBlog().then(() => {
   render();
   // 회원 페이지까지 함께 로그아웃하고 돌아왔으면 안내
