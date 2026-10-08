@@ -148,7 +148,7 @@ cd ~/Documents/my-blog/php-auth && php -S localhost:8080 -t public      # 회원
 | `CLAUDE.md` | 작업 규칙 요약 |
 
 - 새 기능은 Claude Code에서 `/speckit-specify 만들 기능 설명` → `/speckit-plan` → `/speckit-tasks` → `/speckit-implement` 순서로 만듭니다(다음 번호 009).
-- **코드가 바뀔 때마다 이 README.md와 requirements.md를 같은 커밋에서 함께 고칩니다** (헌법 원칙 V, 요구사항 NFR-17).
+- **코드가 바뀔 때마다 이 README.md와 requirements.md를 같은 커밋에서 함께 고치고, 커밋하면 바로 GitHub(changpcg/my-blog)에 올립니다** (헌법 원칙 V, 요구사항 NFR-17).
 - 실제 자료를 건드리지 않는 점검을 한 번에:
 
 ```bash

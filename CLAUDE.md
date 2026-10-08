@@ -24,7 +24,7 @@
 3. 원본 Claude Docs 문서도 같은 내용으로 고칩니다.
 4. 기능 작업이면 `specs/<번호>-<이름>/tasks.md` 체크와 spec의 Status.
 
-문서와 동작이 다르면 버그로 보고 함께 고칩니다.
+문서와 동작이 다르면 버그로 보고 함께 고칩니다. 커밋한 뒤에는 바로 GitHub에 올립니다(아래 '커밋과 GitHub').
 
 ## 기능 개발 순서 (Spec Kit)
 
@@ -48,7 +48,9 @@ for t in reading_ui editor_cover blog_design offline_assets backup public_deploy
 위 테스트는 코드를 임시 폴더에 복사해 빈 포트에서 돌리므로 실제 자료를 건드리지 않습니다(`public_deploy`의 회원 서버 부분은 php가 있어야 돎).
 `smoke_security_gaps.py`(001)·`smoke_member_lifecycle.py`(002)는 켜 둔 블로그(8000)·회원 서버(8080)에 직접 요청해 테스트 회원·댓글을 만들었다 지우므로 필요할 때만 돌립니다.
 
-## 커밋
+## 커밋과 GitHub
 
 - 메시지는 한국어 `종류(기능 번호): 내용` 꼴 — 예: `feat(009): …`, `fix: …`, `docs: …`.
 - 커밋 전에 위 점검을 돌리고, 실패하면 커밋하지 않습니다.
+- 커밋하면 **바로 GitHub(`changpcg/my-blog`)에 올립니다** — GitHub Desktop의 Repository → Push(또는 `git push`).
+  문서만 바뀐 커밋도 같고, 올리지 않은 커밋을 남기지 않습니다. 올린 뒤 `origin/main`이 내 `main`과 같은지 확인합니다.
