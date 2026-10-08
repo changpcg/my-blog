@@ -14,7 +14,7 @@
 | `.specify/memory/constitution.md` | 헌법(개발 원칙). 계획마다 Constitution Check |
 | `specs/<번호>-<이름>/` | 기능별 spec·plan·tasks (GitHub Spec Kit) |
 | `.claude/skills/speckit-*` | `/speckit-specify` 같은 Spec Kit 명령 |
-| `docs/erd/` | ERD — 블로그·회원 DB 구조(PostgreSQL 문법 SQL, 관계도). Crowfoot '나만의 블로그' 워크스페이스에 같은 문서 |
+| `docs/erd/` | ERD — 블로그·회원 DB 구조(PostgreSQL 문법 SQL, 관계도, 요구사항·그룹 표). Crowfoot '나만의 블로그' 워크스페이스에 같은 문서(PostgreSQL #1·#2에 배포됨) |
 
 ## 코드가 바뀔 때마다 (필수)
 
@@ -24,7 +24,7 @@
 2. `requirements.md` — 관련 ID 행의 요구사항·완료 기준, 1장 범위·구성 표, 7장 남은 과제 체크. 새 기능은 새 ID를 받습니다.
 3. 원본 Claude Docs 문서도 같은 내용으로 고칩니다.
 4. 기능 작업이면 `specs/<번호>-<이름>/tasks.md` 체크와 spec의 Status.
-5. DB 구조를 바꾸면(`server.py`의 `init_db()`, `php-auth/src/db.php`) `docs/erd/`의 SQL·관계도와 Crowfoot 문서도 함께 고칩니다.
+5. DB 구조를 바꾸면(`server.py`의 `init_db()`, `php-auth/src/db.php`) `docs/erd/`의 SQL·관계도와 Crowfoot 문서도 함께 고치고, Crowfoot에서 plan_migration으로 확인한 뒤 apply_migration으로 배포한 PostgreSQL DB에도 반영합니다. 새 테이블은 근거 요구사항에 연결하고, DB → 문서 동기화(apply_sync)는 하지 않습니다(`docs/erd/README.md`).
 
 문서와 동작이 다르면 버그로 보고 함께 고칩니다. 커밋한 뒤에는 바로 GitHub에 올립니다(아래 '커밋과 GitHub').
 

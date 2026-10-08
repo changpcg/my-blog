@@ -149,7 +149,7 @@ cd ~/Documents/my-blog/php-auth && php -S localhost:8080 -t public      # 회원
 | `specs/001-…/` ~ `specs/008-…/` | 기능별 설계 문서 (spec·plan·tasks, [GitHub Spec Kit](https://github.com/github/spec-kit)) |
 | `.claude/skills/speckit-*` | Claude Code에서 쓰는 Spec Kit 명령 |
 | `CLAUDE.md` | 작업 규칙 요약 |
-| `docs/erd/` | ERD — 두 DB의 구조(PostgreSQL 문법 SQL과 관계도). [Crowfoot](https://crowfoot.java21.net/) '나만의 블로그' 워크스페이스에도 같은 문서 |
+| `docs/erd/` | ERD — 두 DB의 구조(PostgreSQL 문법 SQL과 관계도). [Crowfoot](https://crowfoot.java21.net/) '나만의 블로그' 워크스페이스에도 같은 문서가 있고, 요구사항·그룹을 연결해 Crowfoot의 PostgreSQL DB 두 개에 배포함(설계 확인용 — 블로그는 계속 SQLite 사용) |
 
 - 새 기능은 Claude Code에서 `/speckit-specify 만들 기능 설명` → `/speckit-plan` → `/speckit-tasks` → `/speckit-implement` 순서로 만듭니다(다음 번호 009).
 - **코드가 바뀔 때마다 이 README.md와 requirements.md를 같은 커밋에서 함께 고치고, 커밋하면 바로 GitHub(changpcg/my-blog)에 올립니다** (헌법 원칙 V, 요구사항 NFR-17).
