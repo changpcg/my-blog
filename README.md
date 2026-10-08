@@ -72,8 +72,12 @@ BLOG_PASSWORD=원하는비밀번호 python3 server.py
 | `static/vendor/` | 내장 라이브러리·글꼴 (marked·DOMPurify·highlight.js·Pretendard, 출처·라이선스·확인값은 그 안 README) |
 | `blog.db` | 글·댓글 데이터 (처음 실행 시 생성) |
 | `uploads/` | 업로드한 이미지 |
+| `php-auth/` | 회원 서버 (PHP: 회원가입·로그인·SNS 로그인) |
 | `tools/backup.py`, `tools/restore.py` | 백업·복원 도구 |
 | `backups/` | 백업 (자동·수동, git에 올라가지 않음) |
+| `deploy/` | 인터넷 공개 안내와 Nginx·systemd 예시 |
+| `tests/` | 스모크 테스트 |
+| `requirements.md`, `specs/`, `.specify/`, `CLAUDE.md` | 개발 문서 (아래 '개발 문서와 작업 규칙') |
 
 ## 백업·복원
 
@@ -130,3 +134,23 @@ cd ~/Documents/my-blog/php-auth && php -S localhost:8080 -t public      # 회원
 - PHP는 서명한 1회용 입장권(5분)을 블로그에 넘기고, 블로그는 `php-auth/db/sso.key`로 서명을 확인합니다
 - 관리자(`admin`)와 예전 블로그 계정은 로그인 화면 아래 **관리자 · 예전 블로그 계정으로 로그인**을 씁니다
 - 예전 블로그 계정과 같은 아이디로 PHP에 가입하면, 예전 블로그 비밀번호를 한 번 입력해 연결합니다
+
+## 개발 문서와 작업 규칙
+
+코드와 개발 문서가 이 저장소 하나에 있습니다(예전 문서 저장소 blog-project를 2026-10-08에 기록과 함께 합침).
+
+| 위치 | 내용 |
+|---|---|
+| `requirements.md` | 요구사항 정의서 — 요구사항 ID·완료 기준·남은 과제 (원본: Claude Docs 문서 '나만의 블로그 요구사항 정의서') |
+| `.specify/memory/constitution.md` | 헌법 — 개발 원칙 (서버가 최종 판단, 설치 없이 돈다, 데이터 보존 등) |
+| `specs/001-…/` ~ `specs/008-…/` | 기능별 설계 문서 (spec·plan·tasks, [GitHub Spec Kit](https://github.com/github/spec-kit)) |
+| `.claude/skills/speckit-*` | Claude Code에서 쓰는 Spec Kit 명령 |
+| `CLAUDE.md` | 작업 규칙 요약 |
+
+- 새 기능은 Claude Code에서 `/speckit-specify 만들 기능 설명` → `/speckit-plan` → `/speckit-tasks` → `/speckit-implement` 순서로 만듭니다(다음 번호 009).
+- **코드가 바뀔 때마다 이 README.md와 requirements.md를 같은 커밋에서 함께 고칩니다** (헌법 원칙 V, 요구사항 NFR-17).
+- 실제 자료를 건드리지 않는 점검을 한 번에:
+
+```bash
+for t in reading_ui editor_cover blog_design offline_assets backup public_deploy; do python3 tests/smoke_$t.py || break; done
+```

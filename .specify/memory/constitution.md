@@ -1,16 +1,20 @@
 <!--
 Sync Impact Report
-- Version change: 1.2.0 → 1.3.0 (MINOR: 원칙 II 지침의 실질적 변경)
-- Modified principles: II. 설치 없이 돈다 — "외부 라이브러리는 jsDelivr CDN의 marked·DOMPurify·highlight.js·Pretendard로
-  한정"을 "같은 4개를 저장소 안 내장 파일(static/vendor/<이름>-<버전>/, 라이선스·SHA-256 포함)로만 불러온다, 실행 중 CDN 요청
-  없음"으로 바꿈. 근거에 "인터넷이 끊겨도 내 컴퓨터의 블로그는 돌아야 한다"를 더함.
-  이유: 007-offline-assets에서 사용자가 '인터넷 끊겨도 동작'을 골라 CDN을 걷어 냄(라이브러리 버전은 그대로).
+- Version change: 1.3.0 → 1.4.0 (MINOR: 원칙 V 지침의 실질적 확대)
+- Modified principles: V. 요구사항 ID로 추적한다 — (1) 코드·화면·설정·실행 방법이 바뀌는 커밋은 같은 커밋에서
+  README.md와 requirements.md를 함께 고친다(작은 수정 포함), (2) 코드와 개발 문서는 저장소 하나(my-blog)에 두고
+  requirements.md는 루트 한 곳에만 둔다(사본 없음)를 더함. 근거에 "같은 커밋" 이유를 더함.
+  이유: 사용자가 "업데이트되거나 코드가 바뀔 때마다 README.md와 requirements.md를 갱신"을 요청했고, 코드 저장소(my-blog)와
+  문서 저장소(blog-project, GitHub changpcg/docs)를 my-blog 하나로 합침(기록 유지).
+- Other edits: 기술 제약의 "코드 저장소의 deploy/" → "이 저장소의 deploy/", 개발 흐름 5단계의 문서 갱신 문구,
+  Governance에 저장소 구성·CLAUDE.md(작업 규칙 요약) 한 줄.
 - Added sections: 없음
 - Removed sections: 없음
-- Templates: 변경 없음 (plan/spec/tasks 템플릿은 실행 시 이 헌법을 읽음)
-- Follow-up TODOs: 없음 (requirements.md NFR-02·06·07·15와 7장 jsDelivr 행은 007 T009에서 함께)
+- Templates: 변경 없음 (plan/spec/tasks 템플릿은 실행 시 이 헌법을 읽음, 원칙 이름은 그대로)
+- Follow-up TODOs: 없음 (requirements.md NFR-17·7장, README '개발 문서와 작업 규칙', CLAUDE.md는 같은 커밋에서)
 - Previous: 1.0.0 → 1.1.0 (MINOR: 배포를 범위 안으로, 003) → 1.1.1 (PATCH: php -S 로컬 점검 예외 명시, 003 analyze)
-  → 1.2.0 (MINOR: 원칙 VI 디자인 문구를 NFR-01로 위임, 004)
+  → 1.2.0 (MINOR: 원칙 VI 디자인 문구를 NFR-01로 위임, 004) → 1.3.0 (MINOR: 원칙 II 외부 라이브러리를 저장소 안
+  내장 파일로, 007)
 -->
 
 # 나만의 블로그 Constitution
@@ -76,8 +80,13 @@ Sync Impact Report
 - spec.md의 각 기능 요구사항은 관련 기존 ID를 적는다.
 - 구현이 끝나면 MUST `requirements.md`(와 원본 Claude Docs 문서)의 표·남은 과제 체크를
   함께 갱신한다. 문서와 동작이 다르면 버그로 본다.
+- 코드·화면·설정·실행 방법이 바뀌는 커밋은 MUST 같은 커밋에서 `README.md`(실행 방법·기능·파일 구조·
+  점검 명령)와 `requirements.md`를 함께 고친다. 기능 단위가 아닌 작은 수정도 같다.
+- 코드와 개발 문서(이 헌법·`specs/`·`requirements.md`·`README.md`)는 MUST 저장소 하나(my-blog)에 두고,
+  `requirements.md`는 저장소 루트 한 곳에만 둔다(저장소 안에 사본을 만들지 않는다).
 
 근거: 요구사항 정의서가 이 프로젝트의 단일 기준이며, Spec Kit 산출물은 그것을 바꾸는 단위다.
+문서가 코드와 같은 커밋에서 바뀌어야 어느 시점의 코드든 그때의 설명과 맞는다.
 
 ### VI. 한국어·모든 화면·모든 사람
 
@@ -122,7 +131,7 @@ Sync Impact Report
   배포 설정에 적은 믿는 프록시에서 온 것만 믿는다.
 - 설정 오류는 안전한 쪽으로: 필수 설정이 빠지거나 틀리면 블로그 서버는 켜지지 않고, 회원 서버는
   모든 요청을 거절하며, 무엇을 고칠지 한국어로 안내한다. 이때 데이터는 건드리지 않는다.
-- 기준 환경: 배포 절차·설정 예시는 코드 저장소의 deploy/ 문서가 기준이며, 리눅스 VPS(Ubuntu) +
+- 기준 환경: 배포 절차·설정 예시는 이 저장소의 deploy/ 문서가 기준이며, 리눅스 VPS(Ubuntu) +
   Nginx + PHP-FPM + Let's Encrypt를 기준 환경으로 한다.
 
 근거: 인터넷에 공개되는 순간 평문 통신·기본 비밀번호·프록시 뒤 IP 혼동이 가장 먼저 노려진다.
@@ -141,7 +150,7 @@ Sync Impact Report
    - 기존 blog.db로 서버를 켜 데이터가 그대로인지 확인
    - 공개 모드에 영향을 주는 변경은 공개 모드 설정으로도 켜서 확인(로컬에서는 믿는 프록시
      머리글로 https를 흉내 내 점검)
-   - requirements.md 갱신
+   - README.md·requirements.md(와 원본 문서) 갱신을 코드와 같은 커밋에
 
 ## Governance
 
@@ -151,7 +160,7 @@ Sync Impact Report
   - MINOR: 원칙·섹션 추가, 허용 의존성 추가, 지침의 실질적 확대
   - PATCH: 문구·오타·설명 보완
 - 리뷰: 모든 변경은 원칙 I(서버 강제)과 IV(데이터 보존)를 먼저 확인한다.
-- 실행 중 참고 문서는 `requirements.md`이며, 원본은 Claude Docs 문서
-  "나만의 블로그 요구사항 정의서"다.
+- 실행 중 참고 문서는 저장소 루트의 `requirements.md`이며, 원본은 Claude Docs 문서
+  "나만의 블로그 요구사항 정의서"다. 작업 규칙 요약은 저장소 루트의 `CLAUDE.md`에 둔다.
 
-**Version**: 1.3.0 | **Ratified**: 2026-10-07 | **Last Amended**: 2026-10-08
+**Version**: 1.4.0 | **Ratified**: 2026-10-07 | **Last Amended**: 2026-10-08
