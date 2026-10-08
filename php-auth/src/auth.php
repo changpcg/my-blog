@@ -302,7 +302,7 @@ function page_start(string $title): void
         . '<meta name="viewport" content="width=device-width, initial-scale=1">'
         . '<title>' . h($title) . '</title>'
         . '<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css">'
-        . '<link rel="stylesheet" href="style.css"></head><body><main class="wrap">'
+        . '<link rel="stylesheet" href="style.css?v=4"></head><body><main class="wrap">'
         // 어느 회원 화면에서든 블로그 첫 화면으로 돌아가는 버튼
         . '<nav class="top-nav"><a class="back-home" href="' . h(BLOG_URL) . '/#/">← 블로그 홈으로</a></nav>';
     $msg = flash();

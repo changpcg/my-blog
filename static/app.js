@@ -45,12 +45,66 @@ const FILE_ICON = { pdf: '📕', zip: '🗜', hwp: '📘', hwpx: '📘', doc: '�
 const mdSafe = (s) => String(s).replace(/\[/g, '［').replace(/\]/g, '］').replace(/\(/g, '（').replace(/\)/g, '）');
 const fmtSize = (n) => (n >= 1048576 ? (n / 1048576).toFixed(1) + 'MB' : Math.max(1, Math.round(n / 1024)) + 'KB');
 
+// 004: 코드 블록 위에 보여 줄 언어 이름 (글쓴이가 ```python 처럼 적은 것만, 없으면 '코드')
+const CODE_LANG = {
+  js: 'JavaScript', javascript: 'JavaScript', jsx: 'JSX', ts: 'TypeScript', typescript: 'TypeScript', tsx: 'TSX',
+  py: 'Python', python: 'Python', sh: 'Shell', shell: 'Shell', bash: 'Bash', zsh: 'Shell', console: '터미널',
+  html: 'HTML', xml: 'XML', css: 'CSS', scss: 'SCSS', json: 'JSON', yaml: 'YAML', yml: 'YAML', toml: 'TOML', ini: 'INI',
+  sql: 'SQL', java: 'Java', kotlin: 'Kotlin', kt: 'Kotlin', swift: 'Swift', go: 'Go', rust: 'Rust', rs: 'Rust',
+  php: 'PHP', ruby: 'Ruby', rb: 'Ruby', c: 'C', cpp: 'C++', 'c++': 'C++', cs: 'C#', csharp: 'C#', r: 'R', dart: 'Dart',
+  md: 'Markdown', markdown: 'Markdown', diff: 'Diff', dockerfile: 'Dockerfile', nginx: 'Nginx',
+  text: '텍스트', txt: '텍스트', plaintext: '텍스트',
+};
+
+// 본문 HTML 정리 규칙: 글 속 id·name은 'user-content-'를 붙여 화면의 id(#likeBtn·#comments 등)와 겹치지 않게,
+// data-* 속성은 없앰(화면 버튼 연결에 쓰는 data-nb 등을 흉내 내지 못하게)
+const PURIFY = { SANITIZE_NAMED_PROPS: true, ALLOW_DATA_ATTR: false };
+
 function renderMd(md) {
-  const html = DOMPurify.sanitize(marked.parse(md || ''));
+  const html = DOMPurify.sanitize(marked.parse(md || ''), PURIFY);
   const box = document.createElement('div');
   box.innerHTML = html;
-  box.querySelectorAll('pre code').forEach((el) => window.hljs && hljs.highlightElement(el));
-  box.querySelectorAll('img').forEach((img) => (img.loading = 'lazy'));
+  // 글쓴이가 붙인 class는 지움(코드 언어 표시 language-* 만 남김) — 화면 부품(.code-copy·.img-zoom 등)을 흉내 내지 못하게
+  box.querySelectorAll('[class]').forEach((el) => {
+    const keep = el.tagName === 'CODE' ? [...el.classList].filter((c) => /^language-[\w+#.-]+$/.test(c)) : [];
+    if (keep.length) el.className = keep.join(' ');
+    else el.removeAttribute('class');
+  });
+  box.querySelectorAll('pre > code').forEach((code) => {
+    const pre = code.parentElement;
+    // 숨긴 코드를 복사하게 만들 수 없도록 코드 칸의 style·hidden은 지움
+    [pre, code].forEach((el) => { el.removeAttribute('style'); el.removeAttribute('hidden'); });
+    const m = /(?:^|\s)language-([\w+#.-]+)/.exec(code.className);
+    const raw = m ? m[1] : '';
+    if (window.hljs) hljs.highlightElement(code);
+    const wrap = document.createElement('div');
+    wrap.className = 'code-block';
+    const head = document.createElement('div');
+    head.className = 'code-head';
+    const lang = document.createElement('span');
+    lang.className = 'code-lang';
+    const key = raw.toLowerCase();
+    lang.textContent = raw ? (Object.prototype.hasOwnProperty.call(CODE_LANG, key) ? CODE_LANG[key] : raw) : '코드';
+    const copy = document.createElement('button');
+    copy.type = 'button';
+    copy.className = 'code-copy';
+    copy.textContent = '복사';
+    copy.setAttribute('aria-label', `${lang.textContent} 코드 복사`);
+    head.append(lang, copy);
+    pre.replaceWith(wrap);
+    wrap.append(head, pre);
+  });
+  box.querySelectorAll('img').forEach((img) => {
+    img.loading = 'lazy';
+    img.decoding = 'async';
+    if (img.closest('a')) return; // 링크가 걸린 사진은 링크 그대로
+    const zoom = document.createElement('button');
+    zoom.type = 'button';
+    zoom.className = 'img-zoom';
+    zoom.setAttribute('aria-label', img.alt ? `사진 크게 보기: ${img.alt}` : '사진 크게 보기');
+    img.replaceWith(zoom);
+    zoom.appendChild(img);
+  });
   box.querySelectorAll('a[href^="http"]').forEach((a) => { a.target = '_blank'; a.rel = 'noopener'; });
   // 첨부 파일 링크 → 파일 카드
   box.querySelectorAll('a[href^="/uploads/"]').forEach((a) => {
@@ -273,7 +327,7 @@ const blogBanner = (b, small = false) => `
     </div>
     ${b.is_owner && !small ? `<div class="banner-actions">
       <a class="btn small primary" href="#/write">글쓰기</a><a class="btn small" href="#/manage">관리</a></div>` : ''}
-    ${!b.is_owner ? `<div class="banner-actions"><button type="button" class="btn small nb-btn ${b.is_neighbor ? 'on' : ''}" data-nb="${esc(b.username)}" aria-pressed="${!!b.is_neighbor}">${b.is_neighbor ? '✓ 이웃' : '+ 이웃 추가'}</button></div>` : ''}
+    ${!b.is_owner ? `<div class="banner-actions">${neighborBtn(b)}</div>` : ''}
     </div>
   </header>`;
 
@@ -317,18 +371,18 @@ function initialOf(word) {
 }
 const initialRank = (k) => (/[ㄱ-ㅎ]/.test(k) ? 0 : /[A-Z]/.test(k) ? 1 : 2);
 
-// 카드 컴포넌트: 썸네일(있으면) → 종류·카테고리 → 제목 → 요약 → 블로그·날짜·댓글·조회
-const postCardHtml = (p, showBlog = true) => `
-  <a class="card post-card" href="#/post/${p.id}">
-    ${p.thumbnail ? `<img class="card-thumb" src="${esc(p.thumbnail)}" alt="" loading="lazy">` : ''}
-    <div class="card-body">
+// 글 목록 한 줄 (004): 종류·카테고리 → 제목 → 요약 → 블로그·날짜·댓글·조회·공감, 오른쪽에 대표 사진(있으면)
+const postRowHtml = (p, showBlog = true) => `
+  <a class="post-row ${p.thumbnail ? 'has-thumb' : ''}" href="#/post/${p.id}">
+    <div class="post-text">
       <div class="labels">${postLabels(p)}</div>
-      <h2 class="card-title">${p.is_public ? '' : '<span class="badge">비공개</span>'}${esc(p.title)}</h2>
-      <p class="card-excerpt">${esc(p.excerpt)}</p>
-      <div class="meta card-meta">
-        ${showBlog ? `<span class="card-blog">${avatarOf({ avatar: p.author_avatar, nickname: p.author_nickname }, 'mini')}${esc(p.author_blog_title || p.author_nickname || '')}</span>` : ''}
-        <span>${fmtDate(p.created_at)}</span><span>댓글 ${p.comment_count}</span><span>조회 ${p.views}</span>${p.like_count ? `<span class="like-n">♥ ${p.like_count}</span>` : ''}</div>
+      <h2 class="post-title">${p.is_public ? '' : '<span class="badge">비공개</span>'}${esc(p.title)}</h2>
+      ${p.excerpt ? `<p class="post-excerpt">${esc(p.excerpt)}</p>` : ''}
     </div>
+    <div class="meta post-meta">
+      ${showBlog ? `<span class="card-blog">${avatarOf({ avatar: p.author_avatar, nickname: p.author_nickname }, 'mini')}${esc(p.author_blog_title || p.author_nickname || '')}</span>` : ''}
+      <span>${fmtDate(p.created_at)}</span><span>댓글 ${p.comment_count}</span><span>조회 ${p.views}</span>${p.like_count ? `<span class="like-n">♥ ${p.like_count}</span>` : ''}</div>
+    ${p.thumbnail ? `<img class="post-thumb" src="${esc(p.thumbnail)}" alt="" width="120" height="120" loading="lazy" decoding="async">` : ''}
   </a>`;
 
 function faqHtml(posts) {
@@ -362,11 +416,12 @@ function glossaryHtml(posts) {
 }
 
 // 용어 사전 색인 클릭: 해시 주소를 바꾸지 않고 스크롤만
+const plainClick = (e) => e.button === 0 && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey;
 document.addEventListener('click', (e) => {
   const a = e.target.closest('[data-jump]');
-  if (!a) return;
+  if (!a || !plainClick(e)) return;
   e.preventDefault();
-  document.getElementById(a.dataset.jump)?.scrollIntoView({ behavior: 'smooth' });
+  jumpTo(document.getElementById(a.dataset.jump));
 });
 
 // 글 목록 가져오기 (종류에 따라 FAQ·용어 사전은 한 번에)
@@ -382,7 +437,7 @@ function postsBody(data, type, showBlog, emptyHtml) {
   if (!data.posts.length) return emptyHtml;
   if (type === 'faq') return faqHtml(data.posts);
   if (type === 'glossary') return glossaryHtml(data.posts);
-  return `<div class="card-grid">${data.posts.map((p) => postCardHtml(p, showBlog)).join('')}</div>`;
+  return `<div class="post-list">${data.posts.map((p) => postRowHtml(p, showBlog)).join('')}</div>`;
 }
 
 function pagerHtml(data) {
@@ -491,9 +546,16 @@ async function renderBlog(username, { type, category, tag, q, page = 1 }) {
 }
 
 // ---------- 글 상세 ----------
+const SHARE_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="m8.6 13.5 6.8 4M15.4 6.5l-6.8 4"/></svg>';
+
+// 이웃 추가 버튼 (배너·작성자 카드 공통, bindNeighborButtons가 연결)
+const neighborBtn = (b) => `<button type="button" class="btn small nb-btn ${b.is_neighbor ? 'on' : ''}" data-nb="${esc(b.username)}" aria-pressed="${!!b.is_neighbor}">${b.is_neighbor ? '✓ 이웃' : '+ 이웃 추가'}</button>`;
+
 async function renderPost(id) {
+  const seq = routeSeq;
   const p = await api('posts/' + id);
   const b = await loadCur(p.author_username);
+  if (seq !== routeSeq) return; // 그사이 다른 화면으로 이동함
   document.title = `${p.title} - ${b.blog_title}`;
   const isFaq = p.type === 'faq';
   main.innerHTML = `
@@ -503,32 +565,51 @@ async function renderPost(id) {
         <div class="labels">
           <a href="${blogHref(b.username, { type: p.type })}">${postLabels(p)}</a>
         </div>
-        <h1>${isFaq ? '<span class="q">Q</span>' : ''}${p.is_public ? '' : '<span class="badge">비공개</span>'}${esc(p.title)}</h1>
+        <h1 tabindex="-1">${isFaq ? '<span class="q">Q</span>' : ''}${p.is_public ? '' : '<span class="badge">비공개</span>'}${esc(p.title)}</h1>
         <div class="row">
-          <div class="meta"><a class="author-link" href="#/@${esc(b.username)}">${esc(p.author_nickname || '알 수 없음')}</a><span>${fmtDate(p.created_at, true)}</span><span>조회 ${p.views}</span></div>
+          <div class="meta"><a class="author-link" href="#/@${esc(b.username)}">${esc(p.author_nickname || '알 수 없음')}</a><span>${fmtDate(p.created_at, true)}</span><span>조회 ${p.views}</span><span class="read-time" id="readTime"></span></div>
           ${p.can_edit ? `<div class="admin-tools">
             <a class="btn small" href="#/edit/${p.id}">수정</a>
             <button class="btn small danger" id="delPost">삭제</button></div>` : ''}
         </div>
       </header>
       ${isFaq ? '<div class="answer-label"><span class="a">A</span> 답변</div>' : ''}
-      <div class="content ${p.type === 'glossary' ? 'definition' : ''}">${renderMd(p.content)}</div>
+      <details class="toc" id="toc"><summary>목차 <small></small></summary><ol></ol></details>
+      <div class="content ${p.type === 'glossary' ? 'definition' : ''}" id="postContent">${renderMd(p.content)}</div>
       ${p.tags.length ? `<div class="article-tags">${p.tags.map((t) => `<a class="tag" href="${blogHref(b.username, { tag: t })}">#${esc(t)}</a>`).join('')}</div>` : ''}
-      <div class="like-row">
+      <div class="post-actions">
         <button type="button" class="like-btn ${p.liked ? 'on' : ''}" id="likeBtn" aria-pressed="${p.liked}">
           <span class="heart" aria-hidden="true">${p.liked ? '♥' : '♡'}</span> 공감 <b id="likeN">${p.like_count}</b></button>
+        <button type="button" class="share-btn" id="shareBtn">${SHARE_ICON} 공유하기</button>
       </div>
-      <a class="author-card" href="#/@${esc(b.username)}">
-        ${avatarOf(b)}
-        <div><b>${esc(b.blog_title)}</b><div class="desc">${esc(b.nickname)}${b.blog_desc ? ' · ' + esc(b.blog_desc) : ''} · 블로그 가기 →</div></div>
-      </a>
-      ${p.related.length ? `<section class="related"><h3><em>${esc(catName(p.category))}</em> 카테고리의 다른 ${esc(typeName(p.type))} 글</h3><ul>
-        ${p.related.map((r) => `<li><a href="#/post/${r.id}">${esc(r.title)}</a> <span class="count">${fmtDate(r.created_at)}</span></li>`).join('')}
-      </ul></section>` : ''}
-      <nav class="prevnext">
-        ${p.prev ? `<a href="#/post/${p.prev.id}"><small>← 이전 글</small><span>${esc(p.prev.title)}</span></a>` : ''}
-        ${p.next ? `<a class="next" href="#/post/${p.next.id}"><small>다음 글 →</small><span>${esc(p.next.title)}</span></a>` : ''}
-      </nav>
+      <div id="shareSlot"></div>
+      <section class="author-card" aria-label="글쓴이">
+        <a class="author-avatar" href="#/@${esc(b.username)}" tabindex="-1" aria-hidden="true">${avatarOf(b)}</a>
+        <div class="author-main">
+          <a class="author-blog" href="#/@${esc(b.username)}">${esc(b.blog_title)}</a>
+          <div class="author-sub">${esc(b.nickname)} · 글 ${b.total_posts}개 · 이웃 <span class="nb-count">${b.neighbor_count || 0}</span>명</div>
+          ${b.blog_desc ? `<p class="author-desc">${esc(b.blog_desc)}</p>` : ''}
+        </div>
+        <div class="author-actions">
+          ${b.is_owner ? '' : neighborBtn(b)}
+          <a class="btn small" href="#/@${esc(b.username)}">블로그 가기</a>
+        </div>
+      </section>
+      ${p.related.length ? `<section class="related" aria-labelledby="relTitle">
+        <h2 class="related-title" id="relTitle"><em>${esc(catName(p.category))}</em> 카테고리의 다른 ${esc(typeName(p.type))} 글</h2>
+        <div class="related-grid">${p.related.map((r) => `
+          <a class="rel-card" href="#/post/${r.id}">
+            <span class="rel-thumb" data-icon="${TYPE_ICON[r.type] || '📝'}">${r.thumbnail
+              ? `<img src="${esc(r.thumbnail)}" alt="" loading="lazy" decoding="async">`
+              : `<span aria-hidden="true">${TYPE_ICON[r.type] || '📝'}</span>`}</span>
+            <span class="rel-title">${r.is_public ? '' : '<span class="badge">비공개</span>'}${esc(r.title)}</span>
+            <span class="rel-date">${fmtDate(r.created_at)}</span>
+          </a>`).join('')}</div>
+      </section>` : ''}
+      ${p.prev || p.next ? `<nav class="prevnext" aria-label="이전 글과 다음 글">
+        ${p.prev ? `<a href="#/post/${p.prev.id}"><small>‹ 이전 글</small><span>${esc(p.prev.title)}</span></a>` : ''}
+        ${p.next ? `<a class="next" href="#/post/${p.next.id}"><small>다음 글 ›</small><span>${esc(p.next.title)}</span></a>` : ''}
+      </nav>` : ''}
       <section class="comments" id="comments"></section>
     </article>`;
   const del = $('#delPost');
@@ -552,10 +633,209 @@ async function renderPost(id) {
       $('#likeN').textContent = r.count;
     } catch (err) { toast(err.message); } finally { btn.disabled = false; }
   };
+  $('#shareBtn').onclick = () => sharePost(p.title);
+  const content = $('#postContent');
+  $('#readTime').textContent = `${readMinutes(content)}분 읽기`;
+  buildToc(content, $('#toc'));
+  startReadingTools(main.querySelector('.article'), content);
   renderTypeNav(null);
   renderBlogSidebar(b, p.category || '-', p.type);
   renderComments(id);
 }
+
+// ---------- 004: 읽기 도구 · 공유 · 사진 · 코드 ----------
+const reduceMotion = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+// 소제목·색인으로 이동: 주소(해시)는 그대로 두고, 화면 읽기 프로그램도 따라오게 포커스를 옮김
+function jumpTo(el) {
+  if (!el) return;
+  if (!el.hasAttribute('tabindex')) el.setAttribute('tabindex', '-1');
+  el.focus({ preventScroll: true });
+  el.scrollIntoView({ behavior: reduceMotion() ? 'auto' : 'smooth', block: 'start' });
+}
+
+// 화면 읽기 프로그램에만 들리는 안내
+function announce(msg) {
+  let live = $('#srStatus');
+  if (!live) {
+    live = document.createElement('div');
+    live.id = 'srStatus';
+    live.className = 'sr-only';
+    live.setAttribute('role', 'status');
+    document.body.appendChild(live);
+  }
+  live.textContent = '';
+  setTimeout(() => (live.textContent = msg), 50);
+}
+
+// 읽는 시간: 공백을 뺀 글자 수 ÷ 500자, 올림, 최소 1분
+const readMinutes = (el) => Math.max(1, Math.ceil(el.textContent.replace(/\s+/g, '').length / 500));
+
+// 목차: 소제목(h2·h3)이 2개 이상일 때만. 넓은 화면은 펼치고 900px 이하는 접은 채로 시작
+function buildToc(content, box) {
+  const heads = [...content.querySelectorAll('h2, h3')].filter((h) => h.textContent.trim());
+  if (heads.length < 2) { box.remove(); return; }
+  box.querySelector('summary small').textContent = heads.length;
+  box.querySelector('ol').innerHTML = heads.map((h, i) =>
+    `<li class="lv${h.tagName[1]}"><a href="${esc(location.hash)}" data-toc="${i}">${esc(h.textContent.trim())}</a></li>`).join('');
+  box.open = !window.matchMedia('(max-width: 900px)').matches;
+  box.addEventListener('click', (e) => {
+    const a = e.target.closest('[data-toc]');
+    if (!a || !plainClick(e)) return;
+    e.preventDefault();
+    jumpTo(heads[Number(a.dataset.toc)]);
+  });
+}
+
+// 읽은 만큼 차는 막대와 '맨 위로' 버튼 (글 보기에서만, 다른 화면으로 가면 stopReadingTools)
+const reading = { off: null };
+function readingEl(cls, html, tag = 'div') {
+  let el = document.querySelector('.' + cls);
+  if (!el) {
+    el = document.createElement(tag);
+    el.className = cls;
+    el.innerHTML = html;
+    document.body.appendChild(el);
+  }
+  return el;
+}
+function stopReadingTools() {
+  if (reading.off) reading.off();
+  reading.off = null;
+}
+function startReadingTools(article, content) {
+  stopReadingTools();
+  const bar = readingEl('read-progress', '<i></i>');
+  bar.setAttribute('aria-hidden', 'true');
+  const top = readingEl('to-top', '<span aria-hidden="true">↑</span>', 'button');
+  top.type = 'button';
+  top.setAttribute('aria-label', '맨 위로');
+  top.title = '맨 위로';
+  top.onclick = () => {
+    window.scrollTo({ top: 0, behavior: reduceMotion() ? 'auto' : 'smooth' });
+    article.querySelector('h1')?.focus({ preventScroll: true });
+  };
+  let frame = 0;
+  const update = () => {
+    frame = 0;
+    const r = content.getBoundingClientRect();
+    const head = 110; // 위쪽 고정 바 높이
+    const total = r.height - (window.innerHeight - head);
+    const done = total <= 0 ? (r.bottom <= window.innerHeight ? 1 : 0) : (head - r.top) / total;
+    bar.firstChild.style.transform = `scaleX(${Math.min(1, Math.max(0, done))})`;
+    top.hidden = window.scrollY < window.innerHeight;
+  };
+  const onScroll = () => { if (!frame) frame = requestAnimationFrame(update); };
+  bar.hidden = false;
+  window.addEventListener('scroll', onScroll, { passive: true });
+  window.addEventListener('resize', onScroll);
+  update();
+  reading.off = () => {
+    window.removeEventListener('scroll', onScroll);
+    window.removeEventListener('resize', onScroll);
+    if (frame) cancelAnimationFrame(frame);
+    bar.hidden = true;
+    top.hidden = true;
+  };
+}
+
+// 클립보드에 복사: 보안 연결(https·localhost)은 Clipboard API, 아니면 예전 방식. 성공하면 true
+async function copyText(text) {
+  try {
+    if (navigator.clipboard && window.isSecureContext) { await navigator.clipboard.writeText(text); return true; }
+  } catch { /* 아래 방식으로 다시 시도 */ }
+  const active = document.activeElement;
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.setAttribute('readonly', '');
+  ta.style.cssText = 'position:fixed;top:0;left:0;opacity:0;';
+  document.body.appendChild(ta);
+  ta.select();
+  let ok = false;
+  try { ok = document.execCommand('copy'); } catch { ok = false; }
+  ta.remove();
+  if (active && active.focus) active.focus({ preventScroll: true });
+  return ok;
+}
+
+// 공유하기: 공유 창이 있으면 공유 창 → 없으면 주소 복사 → 그것도 안 되면 직접 복사 안내
+async function sharePost(title) {
+  const url = location.href;
+  const data = { title, url };
+  if (navigator.share && (!navigator.canShare || navigator.canShare(data))) {
+    try { await navigator.share(data); return; } catch (err) { if (err && err.name === 'AbortError') return; }
+  }
+  if (await copyText(url)) { toast('주소를 복사했어요.'); return; }
+  const slot = $('#shareSlot');
+  if (!slot) return;
+  slot.innerHTML = `<div class="share-fallback">
+    <input id="shareUrl" readonly value="${esc(url)}" aria-label="글 주소" aria-describedby="shareHint">
+    <small class="hint" id="shareHint">주소를 복사하지 못했어요. 직접 복사해 주세요.</small></div>`;
+  const input = $('#shareUrl');
+  input.focus();
+  input.select();
+}
+
+// 코드 복사 버튼
+async function copyCode(btn) {
+  const code = btn.closest('.code-block')?.querySelector('pre');
+  if (!code) return;
+  if (!(await copyText(code.textContent))) { toast('복사하지 못했어요. 코드를 직접 골라 복사해 주세요.'); return; }
+  btn.textContent = '복사했어요';
+  btn.classList.add('done');
+  announce('코드를 복사했어요.');
+  clearTimeout(btn.doneTimer);
+  btn.doneTimer = setTimeout(() => { btn.textContent = '복사'; btn.classList.remove('done'); }, 1600);
+}
+
+// 사진 크게 보기 (바깥·닫기 버튼·Esc로 닫고, 닫히면 원래 사진으로 포커스)
+let lightbox = null;
+function openLightbox(btn) {
+  const img = btn.querySelector('img');
+  if (!img) return;
+  if (!lightbox) {
+    lightbox = document.createElement('dialog');
+    lightbox.className = 'lightbox';
+    lightbox.setAttribute('aria-label', '사진 크게 보기');
+    lightbox.innerHTML = `<figure class="lb-figure"><img class="lb-img" alt=""><figcaption class="lb-cap"></figcaption></figure>
+      <button type="button" class="lb-close" aria-label="닫기">✕</button>`;
+    document.body.appendChild(lightbox);
+    lightbox.addEventListener('click', (e) => { if (!e.target.closest('.lb-img')) lightbox.close(); });
+    lightbox.addEventListener('close', () => {
+      document.documentElement.classList.remove('lb-open');
+      if (lightbox.opener && lightbox.opener.isConnected) lightbox.opener.focus({ preventScroll: true });
+      lightbox.opener = null;
+    });
+  }
+  const big = lightbox.querySelector('.lb-img');
+  big.src = img.currentSrc || img.src;
+  big.alt = img.alt;
+  lightbox.querySelector('.lb-cap').textContent = img.alt;
+  lightbox.opener = btn;
+  document.documentElement.classList.add('lb-open');
+  lightbox.showModal();
+  lightbox.querySelector('.lb-close').focus();
+}
+
+document.addEventListener('click', (e) => {
+  const zoom = e.target.closest('.img-zoom');
+  if (zoom) { openLightbox(zoom); return; }
+  const copy = e.target.closest('.code-copy');
+  if (copy) copyCode(copy);
+});
+
+// 목록·관련 글 대표 사진을 불러오지 못하면: 목록은 사진 칸을 숨기고, 관련 글은 종류 아이콘으로
+document.addEventListener('error', (e) => {
+  const img = e.target;
+  if (!(img instanceof HTMLImageElement)) return;
+  if (img.classList.contains('post-thumb')) { img.closest('.post-row')?.classList.remove('has-thumb'); img.remove(); }
+  else if (img.parentElement && img.parentElement.classList.contains('rel-thumb')) {
+    const icon = document.createElement('span');
+    icon.setAttribute('aria-hidden', 'true');
+    icon.textContent = img.parentElement.dataset.icon || '📝';
+    img.replaceWith(icon);
+  }
+}, true);
 
 // 댓글 입력 폼 (댓글·답글 공통)
 const commentFormHtml = (id, placeholder, replyTo) => `
@@ -1323,12 +1603,16 @@ async function renderSettings() {
 }
 
 // ---------- 라우터 ----------
+let routeSeq = 0; // 화면을 바꿀 때마다 1씩 (늦게 도착한 응답이 새 화면을 덮지 않게)
 async function render() {
+  routeSeq += 1;
   const [path, query] = (location.hash.slice(1) || '/').split('?');
   const qs = new URLSearchParams(query);
   const page = qs.get('page') || 1;
   const parts = path.split('/').filter(Boolean).map(decodeURIComponent);
   document.title = blog.blog_title;
+  stopReadingTools();
+  if (lightbox && lightbox.open) lightbox.close();
   renderTypeNav(null);
   // 블로그 안에서는 그 블로그만 검색
   const inBlog = parts[0] && parts[0].startsWith('@');

@@ -561,16 +561,49 @@ def norm_tags(raw):
     return ",".join(seen[:20])
 
 
+# 004: 목록·관련 글 대표 사진 = 본문 사진 중 이 블로그에 올린 사진(/uploads/)의 첫 번째.
+# 마크다운 ![](주소 "제목")·<주소>·띄어쓰기와 HTML <img src>를 모두 찾고, 외부 주소 사진(추적 위험)과
+# 코드(``` ~~~ 블록·인라인)·HTML 주석 속 예시는 쓰지 않음.
+# 정규식은 모두 다음 구분 문자([ ] < > ( ) 줄바꿈)에서 멈추게 써서, 일부러 만든 긴 본문에도 걸리는 시간이 길이에 비례만 함
+THUMB_RE = re.compile(
+    r"(?:!\[[^\[\]\n]*\]\(\s*<?|(?i:<img\b)[^<>]*?\s(?i:src)\s*=\s*[\"']?)"
+    r"(/uploads/[0-9a-f]{32}\.(?:png|jpg|gif|webp))(?=[\s)>\"'])"
+)
+FENCE_RE = re.compile(r"^[ \t]{0,3}(`{3,}|~{3,}).*?(?:^[ \t]{0,3}\1|\Z)", re.S | re.M)
+COMMENT_RE = re.compile(r"<!--.*?(?:-->|\Z)", re.S)
+INLINE_CODE_RE = re.compile(r"``(?:[^`\n]|`(?!`))*?``|`[^`\n]*`")
+TAG_RE = re.compile(r"</?[a-zA-Z][^<>]*>")
+MD_NOISE_RE = re.compile(r"!\[[^\[\]]*\]\([^()]*\)|[#>*_`~|\-\[\]]|\((?:http|/uploads/)[^()]*\)|📎")
+POST_MAX_CHARS = 200_000  # 본문 최대 글자 수 (요약·대표 사진 계산이 느려지지 않게)
+
+
+def first_upload_image(text):
+    """대표 사진 주소 (없으면 None)"""
+    plain = INLINE_CODE_RE.sub(" ", COMMENT_RE.sub(" ", FENCE_RE.sub(" ", text or "")))
+    m = THUMB_RE.search(plain)
+    return m.group(1) if m else None
+
+
+def strip_tags_outside_code(text):
+    """HTML 태그(사진 등)는 빼되, 인라인 코드 안의 <글자>는 남김"""
+    out, last = [], 0
+    for m in INLINE_CODE_RE.finditer(text):
+        out.append(TAG_RE.sub(" ", text[last:m.start()]))
+        out.append(m.group(0))
+        last = m.end()
+    out.append(TAG_RE.sub(" ", text[last:]))
+    return "".join(out)
+
+
 def post_dict(row, full=False):
     d = dict(row)
     d["tags"] = [t for t in d["tags"].split(",") if t]
     d["is_public"] = bool(d["is_public"])
     if not full:
         text = d.pop("content")
-        img = re.search(r"!\[[^\]]*\]\(([^)\s]+)", text)
-        d["thumbnail"] = img.group(1) if img else None
-        plain = re.sub(r"```.*?```", " ", text, flags=re.S)
-        plain = re.sub(r"!\[[^\]]*\]\([^)]*\)|[#>*_`~|\-\[\]]|\((?:http|/uploads/)[^)]*\)|📎", " ", plain)
+        d["thumbnail"] = first_upload_image(text)
+        plain = strip_tags_outside_code(COMMENT_RE.sub(" ", FENCE_RE.sub(" ", text)))
+        plain = MD_NOISE_RE.sub(" ", plain)
         d["excerpt"] = re.sub(r"\s+", " ", plain).strip()[:160]
     return d
 
@@ -1804,9 +1837,10 @@ class Handler(SimpleHTTPRequestHandler):
                 f"ORDER BY p.created_at, p.id LIMIT 1",
                 [row["created_at"], pid] + sargs,
             ).fetchone()
+            # 004: 같은 블로그·종류·카테고리에서 볼 수 있는 글 최신순 4개 (사진 카드용 대표 사진 포함)
             related = conn.execute(
-                f"SELECT p.id, p.title, p.created_at FROM posts p WHERE p.category = ? AND p.id != ? AND {same} "
-                f"ORDER BY p.created_at DESC LIMIT 5",
+                f"SELECT p.id, p.title, p.created_at, p.type, p.is_public, p.content FROM posts p "
+                f"WHERE p.category = ? AND p.id != ? AND {same} ORDER BY p.created_at DESC, p.id DESC LIMIT 4",
                 [row["category"], pid] + sargs,
             ).fetchall()
         d = post_dict(row, full=True)
@@ -1819,7 +1853,13 @@ class Handler(SimpleHTTPRequestHandler):
                 ).fetchone())
         d["prev"] = dict(prev) if prev else None
         d["next"] = dict(nxt) if nxt else None
-        d["related"] = [dict(r) for r in related]
+        d["related"] = [
+            {
+                "id": r["id"], "title": r["title"], "created_at": r["created_at"], "type": r["type"],
+                "is_public": bool(r["is_public"]), "thumbnail": first_upload_image(r["content"]),
+            }
+            for r in related
+        ]
         self.send_json(d, headers=headers)
 
     def read_post_body(self, author_id):
@@ -1830,6 +1870,9 @@ class Handler(SimpleHTTPRequestHandler):
         ptype = str(b.get("type", ""))
         if ptype not in POST_TYPES:
             raise ApiError(400, "글 종류를 선택하세요.")
+        content = str(b.get("content", ""))
+        if len(content) > POST_MAX_CHARS:
+            raise ApiError(400, f"본문은 {POST_MAX_CHARS // 10000}만 자까지 쓸 수 있어요. 글을 나눠서 올려 주세요.")
         cat = str(b.get("category", ""))
         with db() as conn:
             row = conn.execute("SELECT categories FROM users WHERE id = ?", (author_id,)).fetchone()
@@ -1841,7 +1884,7 @@ class Handler(SimpleHTTPRequestHandler):
         return (
             ptype,
             title[:200],
-            str(b.get("content", "")),
+            content,
             cat,
             norm_tags(str(b.get("tags", ""))),
             1 if b.get("is_public", True) else 0,
