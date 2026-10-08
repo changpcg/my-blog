@@ -219,6 +219,7 @@ SNS 로그인 키는 php-auth/oauth.config.php 파일에, 맛집 키(네이버 �
 - [x] 인터넷이 끊겨도 동작 → 10월 8일 완료 (화면 라이브러리·글꼴을 저장소 안에, NFR-15, 헌법 1.3.0)
 - [x] 백업 자동화 → 10월 8일 완료 (자동·수동 백업과 복원 도구, 공개 운영 systemd 타이머, NFR-16)
 - [x] 코드와 개발 문서를 한 저장소로 → 10월 8일 완료 (blog-project의 헌법·specs 001~008·requirements.md를 기록과 함께 my-blog로 옮김, 코드가 바뀔 때마다 README.md·requirements.md 함께 갱신, 작업 규칙 CLAUDE.md, 헌법 1.4.0, NFR-17. GitHub changpcg/docs 저장소는 합치기 전 상태로 남고 더는 갱신하지 않음)
+- [x] GitHub 저장소 공개 → 10월 8일 완료 (changpcg/my-blog, 공개 전에 기록 20개 전체를 점검해 SNS 로그인 키·서명 키(sso.key)·DB·업로드·배포 설정이 올라간 적 없음을 확인, 기록 속 비밀번호는 테스트 값과 처음 값 admin1234뿐. 비밀값은 계속 .gitignore로 제외)
 
 ## 8. 추가 요구사항 (4.2\~4.4 반영)
 

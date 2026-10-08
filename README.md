@@ -138,6 +138,7 @@ cd ~/Documents/my-blog/php-auth && php -S localhost:8080 -t public      # 회원
 ## 개발 문서와 작업 규칙
 
 코드와 개발 문서가 이 저장소 하나에 있습니다(예전 문서 저장소 blog-project를 2026-10-08에 기록과 함께 합침).
+저장소는 공개입니다: https://github.com/changpcg/my-blog — SNS 키·서명 키·DB·업로드·백업·배포 설정은 `.gitignore`로 빠져 있으니 올리지 마세요.
 
 | 위치 | 내용 |
 |---|---|

@@ -54,3 +54,4 @@ for t in reading_ui editor_cover blog_design offline_assets backup public_deploy
 - 커밋 전에 위 점검을 돌리고, 실패하면 커밋하지 않습니다.
 - 커밋하면 **바로 GitHub(`changpcg/my-blog`)에 올립니다** — GitHub Desktop의 Repository → Push(또는 `git push`).
   문서만 바뀐 커밋도 같고, 올리지 않은 커밋을 남기지 않습니다. 올린 뒤 `origin/main`이 내 `main`과 같은지 확인합니다.
+- 저장소는 **공개**입니다. 비밀값(SNS 키 `php-auth/oauth.config.php`, `php-auth/db/`의 회원 DB·`sso.key`, `blog.db`, `deploy.config.json`, `uploads/`, `backups/`)은 커밋하지 않습니다(모두 `.gitignore`에 있음). 커밋 전에 `git status`로 새 파일을 확인하고, 테스트·예시에는 진짜 비밀번호·키를 쓰지 않습니다.
