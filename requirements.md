@@ -181,6 +181,7 @@ flowchart TB
 | NFR-15 | 화면 라이브러리·글꼴은 저장소 안에서 | marked 12.0.2·DOMPurify 3.1.6·highlight.js 11.9.0(github·github-dark 색)·Pretendard 1.3.9를 static/vendor/<이름>-<버전>/에 라이선스와 함께 두고 거기서만 불러옴(실행 중 CDN 요청 0건, 바깥 요청을 모두 막은 브라우저에서 목록·본문·코드 색·글쓰기 미리보기·글꼴 정상), static/vendor/README.md에 출처·버전·npm 무결성 값·파일별 SHA-256·버전 올리는 법, 시험(smoke_offline_assets)이 확인값과 CDN 주소가 남지 않았는지 검사 |
 | NFR-16 | 백업을 자동으로 하고 함께 되돌린다 | tools/backup.py: blog.db·회원 DB(SQLite 온라인 백업이라 서버를 켠 채로도 온전, 무결성 검사)·sso.key·oauth.config.php·deploy.config.json·uploads/를 backups/날짜_시각/에 함께, manifest.json(파일별 SHA-256·글 수·회원 수), 폴더 700·비밀 파일 600, 바뀌지 않은 업로드는 하드 링크, start-blog.command가 켤 때 하루 한 번(켜 둔 동안 날짜가 바뀌면 또) 자동, 최근 14개만 남김(복원 직전 안전 백업은 남김), backup-blog.command로 지금 바로, 공개 운영은 systemd 타이머(매일 04:10); tools/restore.py: 목록, 서버가 켜져 있거나 다른 백업·복원 중이거나 DB·키 확인값이 다르면 거절, 지금 상태를 안전 백업으로 남긴 뒤 두 DB·키·업로드를 한꺼번에 되돌리고 중간에 실패하면 원래대로, 이 컴퓨터의 설정 파일은 그대로(--with-config로 바꿈), 두 도구 모두 root 실행 거절 |
 | NFR-17 | 코드와 문서는 한 저장소에서 함께 바뀐다 | 저장소 my-blog 하나에 코드와 개발 문서(requirements.md는 저장소 루트 한 곳, 헌법 .specify/memory/constitution.md, 기능별 spec·plan·tasks specs/, Spec Kit 명령 .claude/skills/, 작업 규칙 CLAUDE.md, README.md, ERD docs/erd/), 코드·화면·설정·실행 방법이 바뀌는 커밋은 같은 커밋에서 README.md(실행 방법·기능·파일 구조·점검 명령)와 requirements.md(관련 ID·남은 과제)를 함께 고치고 원본 Claude Docs 문서도 맞춤, DB 구조가 바뀌면 ERD(docs/erd/·Crowfoot 문서)도 함께 고침, 커밋은 바로 GitHub 저장소(changpcg/my-blog)에 올림, 예전 문서 저장소(blog-project)의 기록은 my-blog에 그대로 이어 붙임(헌법 1.4.0 원칙 V, CLAUDE.md) |
+| NFR-18 | 글·댓글이 많아져도 목록이 느려지지 않는다 | 자주 찾는 연결 칸(FK) 8곳에 인덱스: posts.author_id, comments.post_id·user_id·parent_id, likes.user_id, sessions.user_id, files.user_id, blog_visits.blog_id — 블로그를 켤 때 없으면 만들고(CREATE INDEX IF NOT EXISTS, 기존 자료 그대로), 글 목록의 댓글 수·블로그별 글과 방문 수·회원 탈퇴 정리가 인덱스를 씀(smoke_db_indexes가 EXPLAIN QUERY PLAN으로 확인), 글 2천 개·댓글 5만 개에서 글 목록 한 쪽 20ms → 0.1ms, 인덱스 이름은 ERD(docs/erd·Crowfoot 문서)와 같음 |
 
 ## 7. 외부 연동과 남은 과제
 
@@ -220,8 +221,8 @@ SNS 로그인 키는 php-auth/oauth.config.php 파일에, 맛집 키(네이버 �
 - [x] 백업 자동화 → 10월 8일 완료 (자동·수동 백업과 복원 도구, 공개 운영 systemd 타이머, NFR-16)
 - [x] 코드와 개발 문서를 한 저장소로 → 10월 8일 완료 (blog-project의 헌법·specs 001~008·requirements.md를 기록과 함께 my-blog로 옮김, 코드가 바뀔 때마다 README.md·requirements.md 함께 갱신, 작업 규칙 CLAUDE.md, 헌법 1.4.0, NFR-17. GitHub changpcg/docs 저장소는 합치기 전 상태로 남고 더는 갱신하지 않음)
 - [x] GitHub 저장소 공개 → 10월 8일 완료 (changpcg/my-blog, 공개 전에 기록 20개 전체를 점검해 SNS 로그인 키·서명 키(sso.key)·DB·업로드·배포 설정이 올라간 적 없음을 확인, 기록 속 비밀번호는 테스트 값과 처음 값 admin1234뿐. 비밀값은 계속 .gitignore로 제외)
-- [x] ERD 작성 → 10월 8일 완료 (Crowfoot '나만의 블로그' 워크스페이스에 블로그 DB 12개·회원 DB 6개 테이블 문서, 원본 SQL과 관계도는 docs/erd/. Crowfoot이 더한 FK 인덱스 8개는 실제 blog.db에 아직 없음)
-- [ ] FK 컬럼 인덱스 추가 — 글쓴이·댓글·공감·세션 등 FK 컬럼 8곳에 인덱스가 없어 글·댓글이 많아지면 목록·삭제가 느려질 수 있음(ERD에서 찾음, docs/erd/README.md)
+- [x] ERD 작성 → 10월 8일 완료 (Crowfoot '나만의 블로그' 워크스페이스에 블로그 DB 12개·회원 DB 6개 테이블 문서, 원본 SQL과 관계도는 docs/erd/. Crowfoot이 더한 FK 인덱스 8개는 같은 날 실제 DB에도 추가, NFR-18)
+- [x] FK 컬럼 인덱스 추가 → 10월 8일 완료 (ERD에서 찾음: 글쓴이·댓글·공감·세션 등 8곳, 블로그를 켤 때 자동으로 만듦, 글 2천·댓글 5만 개에서 글 목록 한 쪽 20ms → 0.1ms, NFR-18)
 
 ## 8. 추가 요구사항 (4.2\~4.4 반영)
 

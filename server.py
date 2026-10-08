@@ -278,6 +278,20 @@ def columns(conn, table):
     return [r["name"] for r in conn.execute(f"PRAGMA table_info({table})")]
 
 
+# 자주 찾는 연결 칸(FK)의 인덱스 (NFR-18). 글·댓글이 많아져도 글 목록의 댓글 수, 블로그별 글·방문,
+# 회원 탈퇴 정리가 표 전체를 훑지 않게 한다. 이름은 docs/erd(Crowfoot 문서)와 같다.
+FK_INDEXES = (
+    ("idx_posts_author_id", "posts", "author_id"),
+    ("idx_comments_post_id", "comments", "post_id"),
+    ("idx_comments_user_id", "comments", "user_id"),
+    ("idx_comments_parent_id", "comments", "parent_id"),
+    ("idx_likes_user_id", "likes", "user_id"),
+    ("idx_sessions_user_id", "sessions", "user_id"),
+    ("idx_files_user_id", "files", "user_id"),
+    ("idx_blog_visits_blog_id", "blog_visits", "blog_id"),
+)
+
+
 def init_db():
     os.makedirs(UPLOAD_DIR, exist_ok=True)
     with db() as conn:
@@ -451,6 +465,9 @@ def init_db():
         # 방문자 댓글 비밀번호 실패 기록 (잠금용)
         conn.execute("CREATE TABLE IF NOT EXISTS comment_pw_fails (comment_id INTEGER NOT NULL, ip TEXT NOT NULL, at INTEGER NOT NULL)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_comment_pw_fails ON comment_pw_fails (comment_id, at)")
+        # 연결 칸 인덱스: 위에서 칸을 더한 뒤에 만들고, 이미 있으면 그대로 둔다(기존 DB의 자료는 바꾸지 않음)
+        for name, table, col in FK_INDEXES:
+            conn.execute(f"CREATE INDEX IF NOT EXISTS {name} ON {table} ({col})")
         conn.execute("DELETE FROM sessions WHERE expires < ?", (time.time(),))
 
 

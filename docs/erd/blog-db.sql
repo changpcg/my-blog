@@ -145,6 +145,16 @@ CREATE TABLE sso_nonces (
     CONSTRAINT pk_sso_nonces PRIMARY KEY (nonce)
 );
 
+-- 연결 칸(FK) 인덱스: server.py의 FK_INDEXES가 켤 때 만듦 (NFR-18)
+CREATE INDEX idx_posts_author_id ON posts (author_id);
+CREATE INDEX idx_comments_post_id ON comments (post_id);
+CREATE INDEX idx_comments_user_id ON comments (user_id);
+CREATE INDEX idx_comments_parent_id ON comments (parent_id);
+CREATE INDEX idx_likes_user_id ON likes (user_id);
+CREATE INDEX idx_sessions_user_id ON sessions (user_id);
+CREATE INDEX idx_files_user_id ON files (user_id);
+CREATE INDEX idx_blog_visits_blog_id ON blog_visits (blog_id);
+
 -- 논리명
 COMMENT ON TABLE users IS '블로그 회원';
 COMMENT ON COLUMN users.id IS '회원 번호';

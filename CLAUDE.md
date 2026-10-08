@@ -44,7 +44,7 @@
 ## 점검
 
 ```bash
-for t in reading_ui editor_cover blog_design offline_assets backup public_deploy; do python3 tests/smoke_$t.py || break; done
+for t in reading_ui editor_cover blog_design offline_assets backup db_indexes public_deploy; do python3 tests/smoke_$t.py || break; done
 ```
 
 위 테스트는 코드를 임시 폴더에 복사해 빈 포트에서 돌리므로 실제 자료를 건드리지 않습니다(`public_deploy`의 회원 서버 부분은 php가 있어야 돎).

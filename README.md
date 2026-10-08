@@ -119,6 +119,7 @@ HOST=0.0.0.0 BLOG_PASSWORD=비밀번호 python3 server.py
   개발 중 가입 테스트를 자주 하면 `deploy.config.json`에 `{"signup": {"per_ip_per_hour": 50}}`처럼 한도를 올리세요.
 - 점검: `python3 tests/smoke_public_deploy.py` (코드를 임시 폴더에 복사해 공개·개발 모드를 확인, 실제 DB는 건드리지 않음)
 - 화면(004) 점검: `python3 tests/smoke_reading_ui.py` (php 없이, 대표 사진·관련 글 규칙과 본문 20만 자 상한, 실제 DB는 건드리지 않음)
+- DB 인덱스 점검: `python3 tests/smoke_db_indexes.py` (연결 칸 인덱스 8개와 조회 계획, 실제 DB는 건드리지 않음)
 - 글쓰기(005)·꾸미기(006)·내장 파일(007) 점검: `python3 tests/smoke_editor_cover.py`, `python3 tests/smoke_blog_design.py`, `python3 tests/smoke_offline_assets.py` (모두 php 없이, 실제 DB는 건드리지 않음)
 
 ## 회원가입·로그인 (PHP와 합침)
@@ -155,5 +156,5 @@ cd ~/Documents/my-blog/php-auth && php -S localhost:8080 -t public      # 회원
 - 실제 자료를 건드리지 않는 점검을 한 번에:
 
 ```bash
-for t in reading_ui editor_cover blog_design offline_assets backup public_deploy; do python3 tests/smoke_$t.py || break; done
+for t in reading_ui editor_cover blog_design offline_assets backup db_indexes public_deploy; do python3 tests/smoke_$t.py || break; done
 ```

@@ -21,7 +21,7 @@
 
 다시 만들 때: 워크스페이스 ERD 탭 → **SQL 가져오기** → 데이터베이스 종류 **PostgreSQL** → SQL 파일 내용을 붙여 넣고 미리보기(테이블·관계 수 확인) → 문서 만들기.
 
-Crowfoot은 가져올 때 FK 컬럼마다 인덱스를 더합니다(`idx_posts_author_id`, `idx_comments_post_id` 등 8개). 이 인덱스들은 **아직 실제 blog.db에는 없고**, 글·댓글이 많아지면 필요한 개선 후보입니다.
+Crowfoot은 가져올 때 FK 컬럼마다 인덱스를 더합니다(`idx_posts_author_id`, `idx_comments_post_id` 등 8개). 같은 이름의 인덱스 8개를 2026-10-08부터 블로그가 켤 때 실제 blog.db에도 만듭니다(`server.py`의 `FK_INDEXES`, 요구사항 NFR-18).
 
 DB 구조를 바꾸면(`init_db()`·`db()`에 칸·표 추가) 이 폴더의 SQL과 아래 관계도, Crowfoot 문서를 함께 고칩니다.
 
